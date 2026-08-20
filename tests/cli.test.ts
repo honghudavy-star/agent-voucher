@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("CLI contract", () => {
@@ -16,5 +17,9 @@ describe("CLI contract", () => {
     const result = spawnSync(process.execPath, ["dist/cli.js", "completions", "bash"], { encoding: "utf8" });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("complete -W");
+  });
+
+  it("packages the setup bootstrap script with public assets", async () => {
+    await expect(access("assets/app.js")).resolves.toBeUndefined();
   });
 });

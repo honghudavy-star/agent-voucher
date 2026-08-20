@@ -98,6 +98,7 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     },
     trustProxy: false,
     bodyLimit: 64 * 1024,
+    forceCloseConnections: true,
   });
   app.decorateRequest("sessionContext", null);
   await app.register(cookie);

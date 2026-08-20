@@ -17,7 +17,7 @@
 ## Minor Issues
 
 - 完整30分钟负载和三平台CI需要在发布候选阶段实际运行。
-- Chrome视觉保真验证受当前插件能力缺口阻塞，不能声称完成最终设计签收。
+- 按用户要求采用Chrome Playwright DOM而非截图QA；视觉像素级比较不属于本轮验收方法。
 
 ## Positive Feedback
 

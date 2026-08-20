@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { request as httpRequest } from "node:http";
+import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AccessWorkspaceService } from "@agent-voucher/access-workspace";
 import { RuntimeAuditService } from "@agent-voucher/runtime-audit";
@@ -128,4 +128,22 @@ describe("HTTP security boundary", () => {
     expect(bodies.filter((body) => body.includes("用户名或密码错误")).length).toBeGreaterThan(0);
     expect(bodies.join(" ")).not.toContain("missing-user");
   }, 20_000);
+
+  it("closes promptly even when a browser-style keep-alive connection exists", async () => {
+    const address = new URL(`${baseUrl}/health/live`);
+    const agent = new HttpAgent({ keepAlive: true });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const request = httpRequest({ hostname: address.hostname, port: address.port, path: address.pathname, agent }, (response) => {
+          response.resume(); response.on("end", resolve);
+        });
+        request.on("error", reject); request.end();
+      });
+      const result = await Promise.race([
+        server.close().then(() => "closed"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("timeout"), 2000)),
+      ]);
+      expect(result).toBe("closed");
+    } finally { agent.destroy(); }
+  });
 });

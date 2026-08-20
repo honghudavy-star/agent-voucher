@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appLayout, workspacePage } from "../src/web/views.js";
+import { appLayout, masterDataPage, periodsPage, usersPage, workspacePage } from "../src/web/views.js";
 
 describe("server-rendered UI", () => {
   it("escapes untrusted workspace and audit values", () => {
@@ -24,5 +24,17 @@ describe("server-rendered UI", () => {
     expect(html).toContain("不安全局域网模式");
     expect(html).not.toContain("OCR");
     expect(html).not.toContain("凭证草稿");
+  });
+
+  it("associates every administrative form control with an accessible label", () => {
+    const users = usersPage([], "csrf");
+    expect(users).toContain('for="new-user-username"');
+    expect(users).toContain('id="new-user-username"');
+    const periods = periodsPage([], "csrf");
+    expect(periods).toContain('for="new-period"');
+    expect(periods).toContain('id="new-period"');
+    const master = masterDataPage([], "csrf");
+    expect(master).toContain('for="master-data-type"');
+    expect(master).toContain('id="master-data-type"');
   });
 });

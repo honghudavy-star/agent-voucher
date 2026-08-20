@@ -102,8 +102,8 @@ export function workspacePage(workspace: Record<string, unknown>, jobs: Record<s
 export function workspaceEditPage(workspace: Record<string, unknown>, csrf: string): string {
   return pageHeader("编辑工作区", "只维护必要的工作区和账套显示信息。") + `<section class="form-panel"><form method="post" action="/workspace">
     <input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><input type="hidden" name="revision" value="${value(workspace,"revision","1")}">
-    <div class="form-grid"><div class="form-row"><label class="form-label">工作区名称</label><input class="form-control" name="displayName" value="${value(workspace,"display_name","")}" required></div>
-    <div class="form-row"><label class="form-label">账套名称</label><input class="form-control" name="ledgerName" value="${value(workspace,"ledger_name","")}" required></div></div>
+    <div class="form-grid"><div class="form-row"><label class="form-label" for="workspace-display-name">工作区名称</label><input class="form-control" id="workspace-display-name" name="displayName" value="${value(workspace,"display_name","")}" required></div>
+    <div class="form-row"><label class="form-label" for="workspace-ledger-name">账套名称</label><input class="form-control" id="workspace-ledger-name" name="ledgerName" value="${value(workspace,"ledger_name","")}" required></div></div>
     <div class="form-actions"><a class="button" href="/workspace">取消</a><button class="button primary" type="submit">保存</button></div></form></section>`;
 }
 
@@ -112,9 +112,9 @@ export function usersPage(users: Record<string, unknown>[], csrf: string): strin
     ${user.status === "ACTIVE" ? `<form method="post" action="/admin/users/${value(user,"id")}/disable"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><input type="hidden" name="revision" value="${value(user,"revision")}"><button class="button danger small" type="submit">停用</button></form>` : "—"}</td></tr>`).join("");
   return pageHeader("用户与权限", "固定角色：管理员、操作员、复核员。") + `<section class="form-panel"><form method="post" action="/admin/users">
     <input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><div class="form-grid">
-    <div class="form-row"><label class="form-label">用户名</label><input class="form-control" name="username" required></div>
-    <div class="form-row"><label class="form-label">显示名称</label><input class="form-control" name="displayName" required></div>
-    <div class="form-row"><label class="form-label">初始密码</label><input class="form-control" type="password" name="password" minlength="12" required></div>
+    <div class="form-row"><label class="form-label" for="new-user-username">用户名</label><input class="form-control" id="new-user-username" name="username" required></div>
+    <div class="form-row"><label class="form-label" for="new-user-display-name">显示名称</label><input class="form-control" id="new-user-display-name" name="displayName" required></div>
+    <div class="form-row"><label class="form-label" for="new-user-password">初始密码</label><input class="form-control" id="new-user-password" type="password" name="password" minlength="12" required></div>
     <div class="form-row"><span class="form-label">角色</span><div class="checkbox-row"><label><input type="checkbox" name="roles" value="ADMIN"> 管理员</label><label><input type="checkbox" name="roles" value="OPERATOR" checked> 操作员</label><label><input type="checkbox" name="roles" value="REVIEWER"> 复核员</label></div></div></div>
     <div class="form-actions"><button class="button primary" type="submit">创建用户</button></div></form></section>
     ${table(["用户名","显示名称","角色","状态","创建时间","操作"], rows, 6)}`;
@@ -123,9 +123,9 @@ export function usersPage(users: Record<string, unknown>[], csrf: string): strin
 export function periodsPage(periods: Record<string, unknown>[], csrf: string): string {
   const rows = periods.map((period) => `<tr><td>${value(period,"period")}</td><td>${status(value(period,"status"))}</td><td>${value(period,"revision")}</td><td>${dateValue(period.created_at)}</td><td>
     <form method="post" action="/accounting-periods/${value(period,"id")}"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><input type="hidden" name="revision" value="${value(period,"revision")}">
-    <select class="form-control compact-control" name="status"><option value="OPEN" ${period.status === "OPEN" ? "selected" : ""}>开放</option><option value="CLOSED" ${period.status === "CLOSED" ? "selected" : ""}>关闭</option></select><button class="button small" type="submit">更新</button></form></td></tr>`).join("");
+    <select class="form-control compact-control" name="status" aria-label="${value(period,"period")}期间状态"><option value="OPEN" ${period.status === "OPEN" ? "selected" : ""}>开放</option><option value="CLOSED" ${period.status === "CLOSED" ? "selected" : ""}>关闭</option></select><button class="button small" type="submit">更新</button></form></td></tr>`).join("");
   return pageHeader("会计期间", "期间状态属于版本化工作区配置。") + `<section class="form-panel"><form method="post" action="/accounting-periods"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><div class="form-grid">
-    <div class="form-row"><label class="form-label">期间</label><input class="form-control" type="month" name="period" required></div><div class="form-row"><label class="form-label">状态</label><select class="form-control" name="status"><option value="OPEN">开放</option><option value="CLOSED">关闭</option></select></div></div>
+    <div class="form-row"><label class="form-label" for="new-period">期间</label><input class="form-control" id="new-period" type="month" name="period" required></div><div class="form-row"><label class="form-label" for="new-period-status">状态</label><select class="form-control" id="new-period-status" name="status"><option value="OPEN">开放</option><option value="CLOSED">关闭</option></select></div></div>
     <div class="form-actions"><button class="button primary" type="submit">新增期间</button></div></form></section>${table(["期间","状态","Revision","创建时间","操作"],rows,5)}`;
 }
 
@@ -133,10 +133,10 @@ export function masterDataPage(items: Record<string, unknown>[], csrf: string): 
   const rows = items.map((item) => `<tr><td>${value(item,"type")}</td><td>${value(item,"code")}</td><td>${value(item,"name")}</td><td>${status(value(item,"status"))}</td><td>${value(item,"revision")}</td><td>
     ${item.status === "ACTIVE" ? `<form method="post" action="/admin/master-data/${value(item,"type")}/${value(item,"id")}/disable"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><input type="hidden" name="revision" value="${value(item,"revision")}"><button class="button danger small" type="submit">停用</button></form>` : "—"}</td></tr>`).join("");
   return pageHeader("基础资料", "供应商、银行账户、科目和费用科目白名单。") + `<section class="form-panel"><form method="post" action="/admin/master-data"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><div class="form-grid">
-    <div class="form-row"><label class="form-label">类型</label><select class="form-control" name="type"><option value="supplier">供应商</option><option value="bank-account">银行账户</option><option value="account">会计科目</option></select></div>
-    <div class="form-row"><label class="form-label">名称</label><input class="form-control" name="name" required></div>
-    <div class="form-row"><label class="form-label">编码（供应商/科目）</label><input class="form-control" name="code"></div>
-    <div class="form-row"><label class="form-label">账户尾号（银行）</label><input class="form-control" name="accountTail" inputmode="numeric"></div>
+    <div class="form-row"><label class="form-label" for="master-data-type">类型</label><select class="form-control" id="master-data-type" name="type"><option value="supplier">供应商</option><option value="bank-account">银行账户</option><option value="account">会计科目</option></select></div>
+    <div class="form-row"><label class="form-label" for="master-data-name">名称</label><input class="form-control" id="master-data-name" name="name" required></div>
+    <div class="form-row"><label class="form-label" for="master-data-code">编码（供应商/科目）</label><input class="form-control" id="master-data-code" name="code"></div>
+    <div class="form-row"><label class="form-label" for="master-data-tail">账户尾号（银行）</label><input class="form-control" id="master-data-tail" name="accountTail" inputmode="numeric"></div>
     <div class="form-row full"><label><input type="checkbox" name="expenseWhitelisted" value="true"> 加入费用科目白名单</label></div></div>
     <div class="form-actions"><button class="button primary" type="submit">新增基础资料</button></div></form></section>${table(["类型","编码/尾号","名称","状态","Revision","操作"],rows,6)}`;
 }
