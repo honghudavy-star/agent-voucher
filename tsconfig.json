@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@agent-voucher/shared-kernel": ["packages/shared-kernel/src/index.ts"],
+      "@agent-voucher/access-workspace": ["modules/access-workspace/src/index.ts"],
+      "@agent-voucher/runtime-audit": ["modules/runtime-audit/src/index.ts"]
+    }
+  },
+  "include": ["src", "modules", "packages", "tests", "scripts", "tsup.config.ts", "eslint.config.js"]
+}
