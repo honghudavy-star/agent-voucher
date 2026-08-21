@@ -28,8 +28,8 @@ class RpcWorker {
           ? new ConflictError()
           : message === "IDEMPOTENCY_HASH_CONFLICT"
             ? new ConflictError("相同幂等键对应了不同请求，已拒绝执行")
-            : message.includes("AUDIT_IMMUTABLE")
-              ? new Error("AUDIT_IMMUTABLE")
+            : message.includes("_IMMUTABLE")
+              ? new Error(/([A-Z_]+_IMMUTABLE)/.exec(message)?.[1] ?? "IMMUTABLE_RECORD")
             : response.error?.code?.startsWith("SQLITE_CONSTRAINT")
               ? new ConflictError("记录已存在或不满足数据约束")
               : new Error(message);

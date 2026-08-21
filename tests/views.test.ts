@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appLayout, masterDataPage, periodsPage, usersPage, workspacePage } from "../src/web/views.js";
+import { appLayout, loginPage, masterDataPage, periodsPage, setupPage, usersPage, workspacePage } from "../src/web/views.js";
 
 describe("server-rendered UI", () => {
   it("escapes untrusted workspace and audit values", () => {
@@ -36,5 +36,14 @@ describe("server-rendered UI", () => {
     const master = masterDataPage([], "csrf");
     expect(master).toContain('for="master-data-type"');
     expect(master).toContain('id="master-data-type"');
+  });
+
+  it("renders LAN warnings on public pages and confirmation contracts on disable forms", () => {
+    expect(setupPage(undefined, true)).toContain('role="alert"');
+    expect(loginPage("nonce", undefined, true)).toContain("不安全局域网模式");
+    const users = usersPage([{ id: "1", username: "u", display_name: "U", roles: "OPERATOR", status: "ACTIVE", revision: 1 }], "csrf");
+    expect(users).toContain("data-confirm=");
+    const master = masterDataPage([{ id: "1", type: "supplier", code: "S1", name: "供应商", status: "ACTIVE", revision: 1 }], "csrf");
+    expect(master).toContain("确认停用");
   });
 });

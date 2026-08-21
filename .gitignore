@@ -4,8 +4,14 @@ assets/
 coverage/
 .local-data/
 *.tgz
+!vendor/*.tgz
 *.log
 .DS_Store
 .env
 .env.*
 !.env.example
+
+# Optional local planning notes. Formal documents such as docs/PRD.md and
+# docs/PRD-review.md remain trackable.
+docs/local-*.md
+docs/draft-*.md

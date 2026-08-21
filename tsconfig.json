@@ -18,7 +18,10 @@
     "paths": {
       "@agent-voucher/shared-kernel": ["packages/shared-kernel/src/index.ts"],
       "@agent-voucher/access-workspace": ["modules/access-workspace/src/index.ts"],
-      "@agent-voucher/runtime-audit": ["modules/runtime-audit/src/index.ts"]
+      "@agent-voucher/runtime-audit": ["modules/runtime-audit/src/index.ts"],
+      "@agent-voucher/online-acquisition": ["modules/online-acquisition/src/index.ts"],
+      "@agent-voucher/evidence-vault": ["modules/evidence-vault/src/index.ts"],
+      "@agent-voucher/document-understanding": ["modules/document-understanding/src/index.ts"]
     }
   },
   "include": ["src", "modules", "packages", "tests", "scripts", "tsup.config.ts", "eslint.config.js"]

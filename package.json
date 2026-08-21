@@ -11,6 +11,8 @@
     "dist/",
     "assets/",
     "templates/",
+    "vendor/",
+    "scripts/check-node-version.mjs",
     "README.md",
     "LICENSE"
   ],
@@ -19,9 +21,11 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0 <25.0.0"
   },
   "scripts": {
+    "preinstall": "node scripts/check-node-version.mjs",
+    "check:node": "node scripts/check-node-version.mjs",
     "build:assets": "node scripts/copy-assets.mjs",
     "build": "npm run build:assets && tsup",
     "dev": "tsx src/cli.ts start --no-open --data-dir ./.local-data",
@@ -30,19 +34,20 @@
     "test": "npm run build && vitest run",
     "test:watch": "vitest",
     "test:load": "tsx scripts/load-foundation.ts",
+    "test:load:phase2": "npm run build && tsx scripts/load-phase2.ts",
     "check:architecture": "node scripts/check-architecture.mjs",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run check:architecture && npm run build",
+    "check": "npm run check:node && npm run typecheck && npm run lint && npm run test && npm run check:architecture && npm run build",
     "prepack": "npm run check"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/formbody": "^8.0.2",
     "@fastify/helmet": "^13.0.1",
+    "@fastify/multipart": "^10.1.1",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^10.1.3",
     "@fastify/view": "^11.1.1",
     "@langchain/langgraph": "^1.0.12",
-    "@langchain/langgraph-checkpoint-sqlite": "^1.0.0",
     "@tabler/core": "^1.4.0",
     "better-sqlite3": "^13.0.3",
     "commander": "^14.0.1",
@@ -54,15 +59,19 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@langchain/langgraph-checkpoint-sqlite": "^1.0.4",
+    "@thednp/dommatrix": "^3.1.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.0",
     "@vitest/coverage-v8": "^4.0.9",
     "eslint": "^9.39.1",
-    "tsx": "^4.20.6",
+    "pdfjs-dist": "^6.2.108",
     "tsup": "^8.5.1",
+    "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vitest": "^4.0.9"
+    "vitest": "^4.0.9",
+    "xlsx": "file:vendor/xlsx-0.20.3.tgz"
   },
   "publishConfig": {
     "access": "public",

@@ -37,7 +37,10 @@ async function handle(request: GraphRequest): Promise<unknown> {
       if (Buffer.byteLength(encoded) > 64 * 1024) throw new Error("GRAPH_STATE_TOO_LARGE");
       return state;
     }
-    case "health": return { ready: true, database: data.graphPath };
+    case "health": {
+      const quickCheck = saver.db.pragma("quick_check", { simple: true });
+      return { ready: quickCheck === "ok", quickCheck, database: data.graphPath };
+    }
     case "backup": await saver.db.backup(request.operation.destination); return { destination: request.operation.destination };
     case "close": saver.db.close(); return { closed: true };
   }

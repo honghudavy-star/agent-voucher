@@ -6,6 +6,7 @@ import { AccessWorkspaceService } from "@agent-voucher/access-workspace";
 import { RuntimeAuditService } from "@agent-voucher/runtime-audit";
 import type { ActorSnapshot } from "@agent-voucher/shared-kernel";
 import { DbClient } from "./infrastructure/db/client.js";
+import { APP_SCHEMA_VERSION } from "./infrastructure/db/migrations.js";
 import { GraphClient } from "./infrastructure/graph/client.js";
 import { createBackup, restoreBackup } from "./runtime/backup.js";
 import { prepareDataDir } from "./runtime/data-dir.js";
@@ -18,7 +19,7 @@ const systemActor: ActorSnapshot = { userId: "SYSTEM", username: "cli", roles: [
 
 function ensureNode24(): void {
   const major = Number(process.versions.node.split(".")[0]);
-  if (major < 24) throw new Error(`Agent Voucher 需要 Node.js 24 LTS 或更高版本；当前为 ${process.versions.node}`);
+  if (major !== 24) throw new Error(`Agent Voucher 需要 Node.js 24 LTS；当前为 ${process.versions.node}`);
 }
 
 function portValue(input: string): number {
@@ -68,6 +69,10 @@ dataDirOption(program.command("doctor").description("检查数据库、Graph和�
     try {
       await db.start(); await graph.start();
       const report = { dataDir: paths.dataDir, database: await db.health(), graph: await graph.health(), node: process.versions.node };
+      const healthy = report.database.quickCheck === "ok"
+        && Array.isArray(report.database.foreignKeyIssues) && report.database.foreignKeyIssues.length === 0
+        && report.database.foreignKeys === 1 && report.database.trustedSchema === 0
+        && Number(report.database.schemaVersion) <= APP_SCHEMA_VERSION && report.graph.ready === true;
       if (options.json) stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       else {
         console.error(`数据目录: ${report.dataDir}`);
@@ -75,6 +80,7 @@ dataDirOption(program.command("doctor").description("检查数据库、Graph和�
         console.error(`Graph: ${report.graph.ready ? "正常" : "异常"}`);
         console.error(`Node.js: ${report.node}`);
       }
+      if (!healthy) process.exitCode = 1;
     } finally { await graph.close(); await db.close(); await lock.release(); }
   });
 

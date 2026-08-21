@@ -60,6 +60,18 @@ export interface Page<T> {
   total: number;
 }
 
+export interface ModuleMigration {
+  readonly module: string;
+  readonly id: string;
+  readonly version: number;
+  readonly dependsOn: readonly string[];
+  readonly upSql: string;
+}
+
+export interface MigrationManifest extends ModuleMigration {
+  readonly checksum: string;
+}
+
 export const newId = (): string => randomUUID();
 export const nowIso = (): string => new Date().toISOString();
 
