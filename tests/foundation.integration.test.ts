@@ -27,7 +27,7 @@ describe("A01/A02 foundation", () => {
     await db.start(); await graph.start();
     access = new AccessWorkspaceService(db); runtime = new RuntimeAuditService(db, graph);
     await access.bootstrap({
-      token: "x".repeat(32), workspaceName: "测试工作区", ledgerName: "测试总账",
+      workspaceName: "测试工作区", ledgerName: "测试总账",
       username: "admin", displayName: "管理员", password: "Foundation-Test-2026!",
     });
   });

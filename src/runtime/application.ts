@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { AccessWorkspaceService } from "@agent-voucher/access-workspace";
 import { JobRunner, RuntimeAuditService } from "@agent-voucher/runtime-audit";
@@ -30,7 +29,7 @@ export class ApplicationRuntime {
   private lock?: InstanceLock;
   private stopped = false;
 
-  async start(options: StartOptions): Promise<{ url: string; setupUrl?: string }> {
+  async start(options: StartOptions): Promise<{ url: string }> {
     this.stopped = false;
     const paths = await prepareDataDir(options.dataDir);
     this.lock = await acquireInstanceLock(paths.lockFile);
@@ -41,17 +40,6 @@ export class ApplicationRuntime {
       const runtime = new RuntimeAuditService(this.db, this.graph);
       this.phase2 = new Phase2Runtime(this.db, paths.dataDir);
       await this.phase2.start();
-      const setupToken = randomBytes(32).toString("base64url");
-      const setupHash = createHash("sha256").update(setupToken).digest();
-      const setupExpires = Date.now() + 15 * 60_000;
-      let setupConsumed = false;
-      const setupTokenValid = (candidate: string): boolean => {
-        if (setupConsumed || Date.now() > setupExpires) return false;
-        const candidateHash = createHash("sha256").update(candidate).digest();
-        const valid = candidateHash.length === setupHash.length && candidateHash.equals(setupHash);
-        if (valid) setupConsumed = true;
-        return valid;
-      };
       this.runner = new JobRunner(runtime, async () => {
         const [database, graph] = await Promise.all([this.db!.health(), this.graph!.health()]);
         const process = await runtime.runSmokeProcess(SYSTEM_ACTOR);
@@ -62,13 +50,12 @@ export class ApplicationRuntime {
       const host = options.lanMode ? "0.0.0.0" : "127.0.0.1";
       this.server = await createServer({
         host, port: options.port, lanMode: options.lanMode, dataDir: options.dataDir,
-        setupTokenValid, access, runtime, phase2: this.phase2, db: this.db, graph: this.graph,
+        access, runtime, phase2: this.phase2, db: this.db, graph: this.graph,
       });
       this.phase2.startScheduler(runtime);
       const url = `http://127.0.0.1:${options.port}`;
-      const setupUrl = await access.isSetup() ? undefined : `${url}/setup#token=${setupToken}`;
-      if (!options.noOpen) void open(setupUrl ?? url).catch(() => undefined);
-      return { url, ...(setupUrl ? { setupUrl } : {}) };
+      if (!options.noOpen) void open(url).catch(() => undefined);
+      return { url };
     } catch (error: unknown) {
       await this.shutdown();
       throw error;

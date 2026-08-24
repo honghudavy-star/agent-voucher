@@ -46,49 +46,63 @@ describe("HTTP security boundary", () => {
     db = new DbClient(paths.appDb); graph = new GraphClient(paths.graphDb);
     await db.start(); await graph.start();
     access = new AccessWorkspaceService(db);
-    let setupAvailable = true;
     runtime = new RuntimeAuditService(db, graph);
     phase2 = new Phase2Runtime(db, dataDir, new InMemorySecretStore()); await phase2.start();
     server = await createServer({
       host: "127.0.0.1", port: 0, lanMode: false, dataDir,
-      setupTokenValid: (token) => {
-        const valid = setupAvailable && token === "setup-token-for-tests-1234567890";
-        if (valid) setupAvailable = false;
-        return valid;
-      },
       access, runtime, phase2, db, graph, logger: false,
     });
     const address = server.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const remoteSetup = await server.inject({
+      method: "POST", url: "/setup", remoteAddress: "192.168.2.81",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({
+        workspaceName: "远程工作区", ledgerName: "远程总账", username: "remote",
+        displayName: "远程管理员", password: "Foundation-Remote-2026!",
+      }).toString(),
+    });
+    expect(remoteSetup.statusCode).toBe(403);
+
+    const setupPage = await fetch(`${baseUrl}/setup`);
+    const setupHtml = await setupPage.text();
+    expect(setupPage.status).toBe(200);
+    expect(setupHtml).not.toContain('name="token"');
+    expect(setupHtml).not.toContain("15分钟");
+
     const invalidSetup = await fetch(`${baseUrl}/setup`, {
       method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        token: "invalid-setup-token-for-tests-0000", workspaceName: "不能创建", ledgerName: "不能创建",
-        username: "admin", displayName: "管理员", password: "Foundation-Test-2026!",
+        workspaceName: "不能创建", ledgerName: "不能创建",
+        username: "中文用户名", displayName: "管理员", password: "Foundation-Test-2026!",
       }),
     });
-    expect(invalidSetup.status).toBe(403);
+    expect(invalidSetup.status).toBe(400);
     const setup = await fetch(`${baseUrl}/setup`, {
       method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        token: "setup-token-for-tests-1234567890", workspaceName: "安全测试", ledgerName: "安全总账",
+        workspaceName: "安全测试", ledgerName: "安全总账",
         username: "admin", displayName: "管理员", password: "Foundation-Test-2026!",
       }),
     });
     expect(setup.status).toBe(302);
   });
 
-  it("rejects consumed and replacement setup tokens and audits replays", async () => {
-    for (const token of ["setup-token-for-tests-1234567890", "replacement-setup-token-tests-0000"]) {
-      const response = await fetch(`${baseUrl}/setup`, {
-        method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ token, workspaceName: "重复", ledgerName: "重复", username: "other", displayName: "Other", password: "Foundation-Test-2026!" }),
-      });
-      expect(response.status).toBe(403);
-    }
+  it("keeps bootstrap closed after the first local administrator and audits remote attempts", async () => {
+    const response = await fetch(`${baseUrl}/setup`, {
+      method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        workspaceName: "重复", ledgerName: "重复", username: "other",
+        displayName: "Other", password: "Foundation-Test-2026!",
+      }),
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/auth/login");
+    expect(await access.getWorkspace()).toMatchObject({ display_name: "安全测试", ledger_name: "安全总账" });
     const rejected = (await runtime.listAudit()).filter((item) => item.action === "SETUP_REJECTED");
-    expect(rejected.length).toBeGreaterThanOrEqual(3);
-    expect(JSON.stringify(rejected)).not.toContain("setup-token-for-tests");
+    expect(rejected).toHaveLength(1);
+    expect(JSON.stringify(rejected)).not.toContain("Foundation-Remote-2026");
   });
 
   afterEach(async () => {

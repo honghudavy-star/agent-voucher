@@ -2,7 +2,6 @@ import { z } from "zod";
 import { RoleSchema } from "@agent-voucher/shared-kernel";
 
 export const BootstrapSchema = z.object({
-  token: z.string().min(32).max(256),
   workspaceName: z.string().trim().min(1).max(120),
   ledgerName: z.string().trim().min(1).max(120),
   username: z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9._-]+$/),

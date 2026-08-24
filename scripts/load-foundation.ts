@@ -28,7 +28,7 @@ const measure = async <T>(bucket: number[], action: () => Promise<T>): Promise<T
 };
 
 try {
-  await access.bootstrap({ token: "x".repeat(32), workspaceName: "负载测试", ledgerName: "负载总账", username: "admin", displayName: "管理员", password: "Foundation-Test-2026!" });
+  await access.bootstrap({ workspaceName: "负载测试", ledgerName: "负载总账", username: "admin", displayName: "管理员", password: "Foundation-Test-2026!" });
   const admin = await access.authenticate({ username: "admin", password: "Foundation-Test-2026!" });
   for (let index = 1; index <= 4; index += 1) {
     await access.createUser(admin.actor, {

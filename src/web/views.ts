@@ -71,20 +71,19 @@ export function appLayout(options: {
   </div>`);
 }
 
-export function setupPage(message?: string, lanMode = false): string {
+export function setupPage(message?: string, lanMode = false, canSetup = true): string {
   return layout("初始化", `<div class="auth-shell"><div class="auth-brand"><div class="brand-name">Agent Voucher</div><div class="brand-subtitle">账证基础工作台</div></div>
     ${publicLanWarning(lanMode)}
     <section class="auth-card"><h1>初始化工作区</h1><p class="muted">创建唯一工作区、账套和首位管理员。</p>
     ${message ? `<div class="flash">${escapeHtml(message)}</div>` : ""}
-    <form method="post" action="/setup">
-      <input type="hidden" name="token" data-from-fragment>
+    ${canSetup ? `<form method="post" action="/setup">
       <div class="form-row"><label class="form-label" for="workspaceName">工作区名称</label><input class="form-control" id="workspaceName" name="workspaceName" required maxlength="120"></div>
       <div class="form-row"><label class="form-label" for="ledgerName">账套名称</label><input class="form-control" id="ledgerName" name="ledgerName" required maxlength="120"></div>
       <div class="form-row"><label class="form-label" for="username">管理员用户名</label><input class="form-control" id="username" name="username" required minlength="3" maxlength="64" autocomplete="username"></div>
       <div class="form-row"><label class="form-label" for="displayName">显示名称</label><input class="form-control" id="displayName" name="displayName" required maxlength="80"></div>
       <div class="form-row"><label class="form-label" for="password">管理员密码</label><input class="form-control" id="password" type="password" name="password" required minlength="12" maxlength="256" autocomplete="new-password"></div>
       <div class="form-actions"><button class="button primary" type="submit">创建工作区</button></div>
-    </form><p class="auth-note">初始化链接15分钟内有效。密码只在此浏览器表单中提交，不进入命令行或日志。</p></section></div>`, true);
+    </form>` : ""}</section></div>`, true);
 }
 
 export function loginPage(nonce: string, message?: string, lanMode = false): string {

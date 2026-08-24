@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.2] - 2026-08-23
+
+### Changed
+
+- Removed the visible one-time setup-token flow. First-time workspace setup now opens directly from the installation machine while remote LAN clients remain unable to claim the initial administrator account.
+
 ## [0.1.1] - 2026-08-23
 
 ### Added
