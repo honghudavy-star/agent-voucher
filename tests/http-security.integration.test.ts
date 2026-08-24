@@ -6,9 +6,12 @@ import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AccessWorkspaceService } from "@agent-voucher/access-workspace";
 import { RuntimeAuditService } from "@agent-voucher/runtime-audit";
+import { asConnectorId, InMemorySecretStore } from "@agent-voucher/online-acquisition";
+import { newId } from "@agent-voucher/shared-kernel";
 import { DbClient } from "../src/infrastructure/db/client.js";
 import { GraphClient } from "../src/infrastructure/graph/client.js";
 import { prepareDataDir } from "../src/runtime/data-dir.js";
+import { Phase2Runtime } from "../src/runtime/phase2.js";
 import { createServer } from "../src/web/server.js";
 import type { FastifyInstance } from "fastify";
 
@@ -32,6 +35,8 @@ describe("HTTP security boundary", () => {
   let db: DbClient;
   let graph: GraphClient;
   let access: AccessWorkspaceService;
+  let runtime: RuntimeAuditService;
+  let phase2: Phase2Runtime;
   let server: FastifyInstance;
   let baseUrl: string;
 
@@ -41,13 +46,28 @@ describe("HTTP security boundary", () => {
     db = new DbClient(paths.appDb); graph = new GraphClient(paths.graphDb);
     await db.start(); await graph.start();
     access = new AccessWorkspaceService(db);
+    let setupAvailable = true;
+    runtime = new RuntimeAuditService(db, graph);
+    phase2 = new Phase2Runtime(db, dataDir, new InMemorySecretStore()); await phase2.start();
     server = await createServer({
       host: "127.0.0.1", port: 0, lanMode: false, dataDir,
-      setupTokenValid: (token) => token === "setup-token-for-tests-1234567890",
-      access, runtime: new RuntimeAuditService(db, graph), db, graph, logger: false,
+      setupTokenValid: (token) => {
+        const valid = setupAvailable && token === "setup-token-for-tests-1234567890";
+        if (valid) setupAvailable = false;
+        return valid;
+      },
+      access, runtime, phase2, db, graph, logger: false,
     });
     const address = server.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    const invalidSetup = await fetch(`${baseUrl}/setup`, {
+      method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: "invalid-setup-token-for-tests-0000", workspaceName: "不能创建", ledgerName: "不能创建",
+        username: "admin", displayName: "管理员", password: "Foundation-Test-2026!",
+      }),
+    });
+    expect(invalidSetup.status).toBe(403);
     const setup = await fetch(`${baseUrl}/setup`, {
       method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -58,8 +78,21 @@ describe("HTTP security boundary", () => {
     expect(setup.status).toBe(302);
   });
 
+  it("rejects consumed and replacement setup tokens and audits replays", async () => {
+    for (const token of ["setup-token-for-tests-1234567890", "replacement-setup-token-tests-0000"]) {
+      const response = await fetch(`${baseUrl}/setup`, {
+        method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ token, workspaceName: "重复", ledgerName: "重复", username: "other", displayName: "Other", password: "Foundation-Test-2026!" }),
+      });
+      expect(response.status).toBe(403);
+    }
+    const rejected = (await runtime.listAudit()).filter((item) => item.action === "SETUP_REJECTED");
+    expect(rejected.length).toBeGreaterThanOrEqual(3);
+    expect(JSON.stringify(rejected)).not.toContain("setup-token-for-tests");
+  });
+
   afterEach(async () => {
-    await server.close(); await graph.close(); await db.close(); await rm(dataDir, { recursive: true, force: true });
+    phase2.stop(); await server.close(); await graph.close(); await db.close(); await rm(dataDir, { recursive: true, force: true });
   });
 
   async function login(username = "admin", password = "Foundation-Test-2026!") {
@@ -98,6 +131,12 @@ describe("HTTP security boundary", () => {
     const operatorCookies = setCookies.filter((item) => item.startsWith("av_session=") || item.startsWith("av_csrf=")).map(cookiePair).join("; ");
     const users = await fetch(`${baseUrl}/admin/users`, { headers: { cookie: operatorCookies }, redirect: "manual" });
     expect(users.status).toBe(403);
+    const csrfPair = cookiePair(setCookies.find((item) => item.startsWith("av_csrf=")) ?? "");
+    const backup = await fetch(`${baseUrl}/ops/backups`, {
+      method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", cookie: operatorCookies },
+      body: new URLSearchParams({ csrf_token: csrfPair.slice(csrfPair.indexOf("=") + 1) }),
+    });
+    expect(backup.status).toBe(403); expect(await runtime.listBackups()).toHaveLength(0);
     expect(await requestWithHost(new URL(`${baseUrl}/health/live`), "evil.example")).toBe(400);
   });
 
@@ -108,6 +147,71 @@ describe("HTTP security boundary", () => {
     expect(csp).not.toContain("upgrade-insecure-requests");
     expect(response.headers.get("x-frame-options")).toBe("DENY");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("streams authenticated Phase 2 uploads into the evidence vault and forces attachment downloads", async () => {
+    const { setCookies } = await login();
+    const sessionPair = cookiePair(setCookies.find((item) => item.startsWith("av_session=")) ?? "");
+    const csrfPair = cookiePair(setCookies.find((item) => item.startsWith("av_csrf=")) ?? "");
+    const csrf = csrfPair.slice(csrfPair.indexOf("=") + 1); const cookie = `${sessionPair}; ${csrfPair}`;
+    const payload = new FormData(); payload.append("csrf_token", csrf); payload.append("kind", "BANK_STATEMENT");
+    payload.append("file", new Blob(["日期,金额,余额\n2026-08-01,1.00,1.00\n"], { type: "text/csv" }), "bank.csv");
+    const upload = await fetch(`${baseUrl}/imports`, { method: "POST", redirect: "manual", headers: { cookie }, body: payload });
+    expect(upload.status).toBe(302); const location = upload.headers.get("location") ?? ""; expect(location).toMatch(/^\/evidence\//);
+    const detail = await fetch(`${baseUrl}${location}`, { headers: { cookie } }); expect(await detail.text()).toContain("bank.csv");
+    const download = await fetch(`${baseUrl}${location}/download`, { headers: { cookie } });
+    expect(download.headers.get("content-disposition")).toContain("attachment"); expect(download.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await download.text()).toContain("2026-08-01");
+  });
+
+  it("rejects a stale Feishu configuration revision without changing the winning secret", async () => {
+    const { setCookies } = await login();
+    const sessionPair = cookiePair(setCookies.find((item) => item.startsWith("av_session=")) ?? "");
+    const csrfPair = cookiePair(setCookies.find((item) => item.startsWith("av_csrf=")) ?? "");
+    const csrf = csrfPair.slice(csrfPair.indexOf("=") + 1); const cookie = `${sessionPair}; ${csrfPair}`;
+    const connectorForm = (displayName: string, appSecret: string, expectedRevision?: number) => new URLSearchParams({
+      csrf_token: csrf, displayName, platform: "LARK", appId: "cli_test", appSecret,
+      approvalCodes: "APPROVAL_1", attachmentControlIds: "{}", initialLookbackFrom: "2026-08-01",
+      dailySyncTime: "02:00", timeZone: "Asia/Shanghai",
+      ...(expectedRevision === undefined ? {} : { expectedRevision: String(expectedRevision) }),
+    });
+    const post = (body: URLSearchParams) => fetch(`${baseUrl}/sources/feishu`, {
+      method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", cookie }, body,
+    });
+
+    expect((await post(connectorForm("初始连接", "secret-v1"))).status).toBe(302);
+    expect((await post(connectorForm("获胜更新", "secret-v2", 1))).status).toBe(302);
+    expect((await post(connectorForm("过期更新", "stale-secret", 1))).status).toBe(409);
+    const acquisition = phase2.acquisition({ userId: "test", username: "test", roles: ["ADMIN"] });
+    const stored = await acquisition.store.get(asConnectorId("feishu-default"));
+    expect(stored).toMatchObject({ displayName: "获胜更新", revision: 2 });
+    expect(await phase2.secretStore.read(stored!.secretReference)).toBe("secret-v2");
+  });
+
+  it("allows an authenticated operator to add an invoice field missing from the parser result", async () => {
+    const timestamp = new Date().toISOString();
+    await db.write({
+      commandId: newId(), commandType: "TEST_INVOICE_EXTRACTION", commandVersion: 1, correlationId: newId(),
+      actor: { userId: "test-admin", username: "admin", roles: ["ADMIN"] },
+      statements: [{
+        sql: `INSERT INTO doc_invoice_extraction(id, evidence_revision_id, parser_version, status, validation_errors_json, active_revision, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+        params: ["invoice-manual-entry", "evidence-revision-test", "test-parser", "PARTIAL_TEXT", "[]", timestamp, timestamp],
+      }],
+      audit: { action: "TEST_INVOICE_EXTRACTION", objectType: "invoice_extraction", objectId: "invoice-manual-entry", result: "SUCCESS" },
+    });
+    const { setCookies } = await login();
+    const sessionPair = cookiePair(setCookies.find((item) => item.startsWith("av_session=")) ?? "");
+    const csrfPair = cookiePair(setCookies.find((item) => item.startsWith("av_csrf=")) ?? "");
+    const csrf = csrfPair.slice(csrfPair.indexOf("=") + 1);
+    const response = await fetch(`${baseUrl}/invoice-extractions/invoice-manual-entry/fields/buyerName`, {
+      method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", cookie: `${sessionPair}; ${csrfPair}` },
+      body: new URLSearchParams({ csrf_token: csrf, normalizedValue: "测试购方", reason: "PDF 文字层缺失，人工补录" }),
+    });
+    expect(response.status).toBe(302);
+    expect(await phase2.documents.listInvoiceFields("invoice-manual-entry")).toEqual([
+      expect.objectContaining({ field_name: "buyerName", raw_text: "[MANUAL_ENTRY_NO_SOURCE]", normalized_value_json: '"测试购方"' }),
+    ]);
   });
 
   it("rate-limits repeated invalid logins without exposing user existence", async () => {

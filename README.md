@@ -1,23 +1,25 @@
 # Agent Voucher
 
-Agent Voucher 第一阶段是一个本地优先的账证基础工作台，只实现访问与工作区（A01）以及运行与审计（A02）。它不包含连接器、OCR、匹配、Agent、凭证或CSV导出。
+Agent Voucher 是本地优先的账证工作台。第一阶段 A01/A02 与第二阶段 A03/A04/窄范围 A05 已形成 Windows 10 局域网试点基线，覆盖访问与审计、来源接入、证据库、银行表格和文字型发票 PDF 提取。第三阶段的匹配、凭证草稿、人工确认和金蝶草稿推送目前仍是需求基线，不是已实现能力。
 
-当前阶段的正式需求基线见 [`docs/PRD.md`](docs/PRD.md)，需求审查见 [`docs/PRD-review.md`](docs/PRD-review.md)。
+当前正式需求基线见 [`docs/PRD.md`](docs/PRD.md)，对抗性审查见 [`docs/PRD-review.md`](docs/PRD-review.md)，第二阶段数据流和威胁边界见 [`ADR-0004`](docs/adr/0004-phase2-source-evidence-threat-model.md)。需求已经批准不代表实现或验收已经完成。
 
 ## 启动
 
-需要 Node.js 24 LTS：
+需要 Node.js 24 LTS。当前包尚未发布到 npm registry；从源码构建：
 
 ```bash
-npx -y agent-voucher@0.1.0 start
+npm ci
+npm run check
+node dist/cli.js start --data-dir ./.local-data
 ```
 
-本地开发：
+安装本地构建的 tarball：
 
 ```bash
-npm install
-npm run build
-node dist/cli.js start --data-dir ./.local-data
+npm pack
+npm install --global ./agent-voucher-0.1.1.tgz
+agent-voucher start --data-dir ./.local-data
 ```
 
 显式局域网模式使用未加密HTTP，只能在受信、隔离的私有网络中使用：
@@ -38,6 +40,8 @@ agent-voucher start --lan
 
 - 单企业、单账套、单应用实例。
 - 会话和密码只保存不可逆哈希。
+- 飞书 App Secret 必须保存在 Windows Credential Manager，不能进入 SQLite 或备份。
 - 默认只绑定 `127.0.0.1`。
-- `--lan` 使用HTTP，凭据和会话没有传输加密；禁止端口映射或公网暴露。
+- `--lan` 使用 HTTP，凭据、会话和财务原件没有传输加密；禁止端口映射或公网暴露。
+- 原件和备份暂不做应用级静态加密，备份介质可直接读取财务资料。
 - 真实npm发布和GitHub Release不属于本地实现授权。

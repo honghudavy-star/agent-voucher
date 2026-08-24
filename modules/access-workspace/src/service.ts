@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import type { ActorSnapshot, DatabasePort, Role, WriteCommand } from "@agent-voucher/shared-kernel";
-import { newId, nowIso, requireRole } from "@agent-voucher/shared-kernel";
+import { ConflictError, newId, nowIso, requireRole } from "@agent-voucher/shared-kernel";
 import { hashPassword, hashToken, newSecretToken, verifyPassword } from "./password.js";
-import type { BootstrapInput, CreateUserInput, LoginInput, MasterDataInput, PeriodInput, UpdatePeriodInput, UpdateWorkspaceInput } from "./schemas.js";
+import { LegalEntityIdentitySchema } from "./schemas.js";
+import type { BootstrapInput, CreateUserInput, LegalEntityIdentity, LoginInput, MasterDataInput, PeriodInput, UpdatePeriodInput, UpdateWorkspaceInput } from "./schemas.js";
 
 interface UserRow {
   id: string;
@@ -183,6 +184,32 @@ export class AccessWorkspaceService {
       { sql: "UPDATE cfg_workspace SET display_name = ?, revision = revision + 1, updated_at = ? WHERE id = 'default' AND revision = ?", params: [input.displayName, nowIso(), input.revision], expectChanges: 1 },
       { sql: "UPDATE cfg_ledger SET name = ?, revision = revision + 1, updated_at = ? WHERE id = 'default'", params: [input.ledgerName, nowIso()], expectChanges: 1 },
     ], { before: input.revision, after: input.revision + 1 }));
+  }
+
+  async getLegalIdentity(): Promise<LegalEntityIdentity | undefined> {
+    const row = await this.db.read<{ legal_name: string; taxpayer_id: string; aliases_json: string; revision: number } | undefined>({
+      sql: "SELECT legal_name, taxpayer_id, aliases_json, revision FROM cfg_legal_identity WHERE id = 'default'", mode: "get",
+    });
+    if (!row) return undefined;
+    return LegalEntityIdentitySchema.parse({
+      legalName: row.legal_name, taxpayerId: row.taxpayer_id,
+      aliases: JSON.parse(row.aliases_json) as unknown, revision: row.revision,
+    });
+  }
+
+  async updateLegalIdentity(actor: ActorSnapshot, input: LegalEntityIdentity): Promise<void> {
+    requireRole(actor, "ADMIN");
+    const parsed = LegalEntityIdentitySchema.parse(input); const timestamp = nowIso();
+    const current = await this.getLegalIdentity();
+    if ((current?.revision ?? 0) !== parsed.revision) throw new ConflictError("LEGAL_IDENTITY_REVISION_CONFLICT");
+    await this.db.write(command(actor, "LEGAL_IDENTITY_UPDATED", "legal_identity", "default", [{
+      sql: `INSERT INTO cfg_legal_identity(id, legal_name, taxpayer_id, aliases_json, revision, created_at, updated_at)
+            VALUES ('default', ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET legal_name = excluded.legal_name, taxpayer_id = excluded.taxpayer_id,
+            aliases_json = excluded.aliases_json, revision = cfg_legal_identity.revision + 1, updated_at = excluded.updated_at
+            WHERE cfg_legal_identity.revision = ?`,
+      params: [parsed.legalName, parsed.taxpayerId, JSON.stringify(parsed.aliases), timestamp, timestamp, parsed.revision], expectChanges: 1,
+    }], { before: parsed.revision || null, after: parsed.revision + 1 }));
   }
 
   async listUsers(): Promise<Record<string, unknown>[]> {

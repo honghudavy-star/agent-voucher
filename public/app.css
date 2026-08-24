@@ -68,6 +68,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .empty-row { color: var(--av-muted); text-align: center; padding: 30px !important; }
 .result-success { color: var(--av-green); font-weight: 600; }
 .result-failed { color: var(--av-red); font-weight: 600; }
+.balance-error td { color: var(--av-red); font-weight: 750; background: #fff1f2; }
+.details-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.details-grid .full { grid-column: 1 / -1; }
+.details-grid code, .data-table code { word-break: break-all; font-size: 12px; }
+.data-table pre { max-width: 560px; max-height: 180px; overflow: auto; white-space: pre-wrap; font-size: 11px; }
+textarea.form-control { min-height: 90px; resize: vertical; }
 
 .form-panel { border: 1px solid var(--av-line); border-radius: var(--av-radius); padding: 20px; margin-bottom: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 18px; }
@@ -79,11 +85,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .compact-control { min-height: 30px; padding-block: 4px; display: inline-block; width: auto; margin-right: 6px; }
 .form-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 10px; }
 .checkbox-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; min-height: 40px; }
+.inline-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.inline-actions form { margin: 0; }
 .flash { margin-bottom: 14px; border: 1px solid #efb74f; background: var(--av-amber-bg); color: var(--av-amber); padding: 10px 12px; border-radius: var(--av-radius); }
 .flash[hidden] { display: none; }
 
 .public-page { min-height: 100vh; display: grid; place-items: center; background: #f5f7fa; padding: 24px; }
 .auth-shell { width: min(440px, 100%); }
+.public-lan-warning { border: 1px solid #efb74f; border-radius: var(--av-radius); margin-bottom: 14px; padding-inline: 14px; }
 .auth-brand { text-align: center; margin-bottom: 20px; }
 .auth-brand .brand-name { font-size: 28px; }
 .auth-card { background: #fff; border: 1px solid var(--av-line); border-radius: 10px; padding: 28px; box-shadow: 0 16px 42px rgba(34,48,70,.08); }

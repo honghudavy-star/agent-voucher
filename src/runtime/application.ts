@@ -10,6 +10,7 @@ import { createServer } from "../web/server.js";
 import type { FastifyInstance } from "fastify";
 import { prepareDataDir } from "./data-dir.js";
 import { acquireInstanceLock, type InstanceLock } from "./instance-lock.js";
+import { Phase2Runtime } from "./phase2.js";
 
 const SYSTEM_ACTOR: ActorSnapshot = { userId: "SYSTEM", username: "runtime-worker", roles: ["ADMIN"] };
 
@@ -25,6 +26,7 @@ export class ApplicationRuntime {
   private graph?: GraphClient;
   private server?: FastifyInstance;
   private runner?: JobRunner;
+  private phase2?: Phase2Runtime;
   private lock?: InstanceLock;
   private stopped = false;
 
@@ -37,6 +39,8 @@ export class ApplicationRuntime {
       this.graph = new GraphClient(paths.graphDb); await this.graph.start();
       const access = new AccessWorkspaceService(this.db);
       const runtime = new RuntimeAuditService(this.db, this.graph);
+      this.phase2 = new Phase2Runtime(this.db, paths.dataDir);
+      await this.phase2.start();
       const setupToken = randomBytes(32).toString("base64url");
       const setupHash = createHash("sha256").update(setupToken).digest();
       const setupExpires = Date.now() + 15 * 60_000;
@@ -53,12 +57,14 @@ export class ApplicationRuntime {
         const process = await runtime.runSmokeProcess(SYSTEM_ACTOR);
         return { database, graph, process };
       });
+      this.phase2.registerHandlers(this.runner.registry);
       await this.runner.start();
       const host = options.lanMode ? "0.0.0.0" : "127.0.0.1";
       this.server = await createServer({
         host, port: options.port, lanMode: options.lanMode, dataDir: options.dataDir,
-        setupTokenValid, access, runtime, db: this.db, graph: this.graph,
+        setupTokenValid, access, runtime, phase2: this.phase2, db: this.db, graph: this.graph,
       });
+      this.phase2.startScheduler(runtime);
       const url = `http://127.0.0.1:${options.port}`;
       const setupUrl = await access.isSetup() ? undefined : `${url}/setup#token=${setupToken}`;
       if (!options.noOpen) void open(setupUrl ?? url).catch(() => undefined);
@@ -83,6 +89,7 @@ export class ApplicationRuntime {
 
   async shutdown(): Promise<void> {
     if (this.stopped) return; this.stopped = true;
+    this.phase2?.stop();
     await this.runner?.stop().catch(() => undefined);
     await this.server?.close().catch(() => undefined);
     await this.graph?.close().catch(() => undefined);

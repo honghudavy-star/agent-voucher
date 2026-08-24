@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
-import { schemaSql, APP_SCHEMA_VERSION } from "./schema.js";
+import { APP_SCHEMA_VERSION, applyModuleMigrations, foundationMigrations } from "./migrations.js";
 import type { DbWorkerRequest, DbWorkerResponse } from "./protocol.js";
 import type { SqlStatement, WriteCommand } from "@agent-voucher/shared-kernel";
 
@@ -23,9 +23,7 @@ if (!data.readonly) {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   db.pragma("trusted_schema = OFF");
-  db.exec(schemaSql);
-  db.prepare("INSERT OR IGNORE INTO ops_schema_migration(version, applied_at) VALUES (?, ?)")
-    .run(APP_SCHEMA_VERSION, new Date().toISOString());
+  await applyModuleMigrations(db, data.databasePath, foundationMigrations());
 } else {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
@@ -110,6 +108,8 @@ async function handle(request: DbWorkerRequest): Promise<unknown> {
     case "health": {
       const quickCheck = db.pragma("quick_check", { simple: true });
       const foreignKeyIssues = db.pragma("foreign_key_check");
+      const hasModuleLedger = Number((db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'ops_module_migration'").get() as { count: number }).count) === 1;
+      const legacyVersion = db.prepare("SELECT max(version) AS version FROM ops_schema_migration").get() as { version: number | null };
       return {
         quickCheck,
         foreignKeyIssues,
@@ -117,7 +117,8 @@ async function handle(request: DbWorkerRequest): Promise<unknown> {
         synchronous: db.pragma("synchronous", { simple: true }),
         foreignKeys: db.pragma("foreign_keys", { simple: true }),
         trustedSchema: db.pragma("trusted_schema", { simple: true }),
-        schemaVersion: APP_SCHEMA_VERSION,
+        schemaVersion: legacyVersion.version ?? (hasModuleLedger ? APP_SCHEMA_VERSION : 0),
+        moduleMigrations: hasModuleLedger ? db.prepare("SELECT id, module, version, checksum, applied_at FROM ops_module_migration ORDER BY module, version").all() : [],
       };
     }
     case "backup": {
