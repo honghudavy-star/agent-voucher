@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parserProcessArgs, runParserSubprocess, sanitizedParserEnvironment } from "./parser-launcher.js";
 import type { ParserSpawnFactory } from "./parser-launcher.js";
@@ -32,8 +33,8 @@ describe("parser subprocess launcher", () => {
     }, { entryPath: "/app/parser-child.js", resourceReadPaths: ["/app/parser-assets"] });
     expect(args).toContain("--max-old-space-size=256");
     expect(args).toContain("--permission");
-    expect(args).toContain("--allow-fs-read=/tmp/bank.csv");
-    expect(args).toContain("--allow-fs-read=/app/parser-assets");
+    expect(args).toContain(`--allow-fs-read=${resolve("/tmp/bank.csv")}`);
+    expect(args).toContain(`--allow-fs-read=${resolve("/app/parser-assets")}`);
   });
 
   it("kills a parser that exceeds its deadline", async () => {
