@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { ConflictError } from "@agent-voucher/shared-kernel";
 import type { ConnectionConfigStore, ConnectorAdapter, EvidenceIngestPort, SecretStore, SourceArchivePort } from "./contracts.js";
 import { ConfigureFeishuConnectionSchema, FeishuConnectionConfigSchema, type ConfigureFeishuConnectionInput } from "./schemas.js";
 import {
@@ -18,6 +19,17 @@ import {
 
 export type ConnectorAdapterFactory = (config: FeishuConnectionConfig) => ConnectorAdapter;
 
+function attachmentFallbackName(instanceCode: string, controlId: string, index: number, mediaType: string): string {
+  const extension = new Map([
+    ["application/pdf", ".pdf"],
+    ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"],
+    ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"],
+    ["image/png", ".png"],
+    ["image/jpeg", ".jpg"],
+  ]).get(mediaType.toLowerCase().split(";", 1)[0] ?? "") ?? "";
+  return `${instanceCode}-${controlId}-${String(index)}${extension}`;
+}
+
 export class OnlineAcquisitionService {
   constructor(
     private readonly configs: ConnectionConfigStore,
@@ -29,20 +41,26 @@ export class OnlineAcquisitionService {
 
   async configureFeishu(input: ConfigureFeishuConnectionInput): Promise<FeishuConnectionConfig> {
     const parsed = ConfigureFeishuConnectionSchema.parse(input);
-    const secretReference = asSecretReference(`feishu:${parsed.connectorId}`);
+    const previous = await this.configs.get(parsed.connectorId);
+    if (previous && parsed.expectedRevision !== previous.revision) throw new ConflictError("FEISHU_CONNECTION_REVISION_CONFLICT");
+    if (!previous && parsed.expectedRevision !== undefined) throw new ConflictError("FEISHU_CONNECTION_NOT_FOUND");
+    const nextRevision = (previous?.revision ?? 0) + 1;
+    const secretReference = asSecretReference(`feishu:${parsed.connectorId}:r${String(nextRevision)}:${randomUUID()}`);
     const config = FeishuConnectionConfigSchema.parse({
       ...parsed,
       secretReference,
-      revision: parsed.expectedRevision === undefined ? 1 : parsed.expectedRevision + 1,
+      revision: nextRevision,
       status: CONNECTOR_STATUS.ACTIVE,
     });
-    const previousSecret = await this.secrets.read(secretReference);
     await this.secrets.save(secretReference, parsed.appSecret);
     try {
-      return await this.configs.save(config, parsed.expectedRevision);
+      const saved = await this.configs.save(config, parsed.expectedRevision);
+      if (previous && previous.secretReference !== saved.secretReference) {
+        await this.secrets.delete(previous.secretReference).catch(() => undefined);
+      }
+      return saved;
     } catch (error) {
-      if (previousSecret === undefined) await this.secrets.delete(secretReference).catch(() => undefined);
-      else await this.secrets.save(secretReference, previousSecret).catch(() => undefined);
+      await this.secrets.delete(secretReference).catch(() => undefined);
       throw error;
     }
   }
@@ -111,7 +129,8 @@ export class OnlineAcquisitionService {
           connectorId,
           externalId: `${instance.instanceCode}:${attachment.controlId}:${attachment.index}`,
           remoteRevisionHash,
-          originalFileName: download.suggestedFilename ?? `${instance.instanceCode}-${attachment.controlId}-${String(attachment.index)}`,
+          originalFileName: download.suggestedFilename
+            ?? attachmentFallbackName(instance.instanceCode, attachment.controlId, attachment.index, download.mediaType),
           declaredMediaType: download.mediaType,
           idempotencyKey: `feishu:${connectorId}:${instance.instanceCode}:${remoteRevisionHash}:${attachment.controlId}:${String(attachment.index)}`,
           content: download.stream,
@@ -129,7 +148,9 @@ export class OnlineAcquisitionService {
       }
     }
     const archived = {
+      connectorId,
       instanceCode: instance.instanceCode,
+      configRevision: config.revision,
       formEvidenceRevisionId,
       attachmentEvidenceRevisionIds: attachmentIds,
       remoteRevisionHash,

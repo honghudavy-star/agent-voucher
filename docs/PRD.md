@@ -1,16 +1,25 @@
-# Agent Voucher 产品需求文档：第二阶段来源与证据
+# Agent Voucher 产品需求文档：自有企业凭证闭环
 
-版本：2.0  
-日期：2026-08-20  
-状态：Phase 2 Windows 10 LAN pilot GO；Credential Manager 桌面会话与完整五用户混合负载保留为非阻断运维检查  
-产品名：Agent Voucher  
+版本：3.0
+
+日期：2026-08-23
+
+状态：Phase 1/2 冻结基线已支持 Windows 10 LAN pilot GO；Phase 3 企业凭证闭环需求已完成对抗性审查，尚未实现或验收
+
+产品名：Agent Voucher
+
 包名与 Slug：`agent-voucher`
 
 ## 1. 文档定位
 
-本文件是当前仓库的正式产品需求基线。第一阶段基线覆盖 A01“访问与工作区”和 A02“运行与审计”；第二阶段在不破坏这些边界的前提下交付 A03“来源接入”、A04“证据库”，并提前实现 A05 中严格受限的银行表格解析和文字型发票 PDF 提取。
+本文件是当前仓库唯一有效的产品需求基线，由两部分组成：
 
-第二阶段的产品承诺是“资料可进入、原件可追溯、结构化结果可人工修订并可恢复”，不是自动做账闭环。OCR、匹配、Agent、凭证草稿、ERP、付款、审核、过账和报税均不属于本阶段。
+1. **冻结且保持不变的已完成基线**：第一阶段 A01“访问与工作区”、A02“运行与审计”，以及第二阶段 A03“来源接入”、A04“证据库”和窄范围 A05“结构化提取”。第二阶段冻结候选为 Git revision `8a2a7f5e56f1dceab285a73676658191caa82cc6`，验收证据补充 revision 为 `85fcb0b`；详细证据见 [`release-candidate-report.md`](release-candidate-report.md)。除修复回归或安全缺陷外，Phase 3 不重做、不降级、不扩写这些能力。
+2. **唯一允许继续实现的未完成范围**：面向当前自有企业，把已归档的银行流水和飞书已通过审批，通过可视化工作流驱动的真实 LangGraph 流程完成 N:N/任意部分匹配，生成人工确认的凭证草稿；确认后可导出固定模板或明确推送为金蝶云星空凭证草稿并回查结果。
+
+第二阶段本身的产品承诺仍然只是“资料可进入、原件可追溯、结构化结果可人工修订并可恢复”；匹配与凭证闭环从本版起只属于 Phase 3，不得倒写为第二阶段已完成能力。
+
+本产品不是通用自动做账平台。Phase 3 完成后即以“本企业可稳定重复运行”为目标收口，不自动产生下一阶段或功能路线图。
 
 ## 2. 产品目标与成功标准
 
@@ -44,6 +53,21 @@
 - A01/A02 权限、审计、单 Writer、Doctor 和恢复边界不退化；
 - 第二阶段自动化、Windows 10 与真实样本证据已支持局域网试点 GO；Credential Manager 桌面会话和完整五用户混合负载未完成，不得误报为已验收。
 
+### 2.4 Phase 3 唯一产品目标
+
+Phase 3 只解决一个问题：让当前企业把银行流水和飞书已通过审批作为输入，在一个实际执行的可视化工作流中完成匹配、凭证草稿确认、固定模板导出和金蝶云星空草稿推送。
+
+Phase 3 成功必须同时满足：
+
+- 使用当前企业的真实脱敏银行流水、真实飞书审批字段和当前会计主数据完成一个完整自然月的端到端运行；
+- 可视化画布保存的业务连线和节点参数实际决定 LangGraph 的执行，不是页面导航或装饰图；
+- 1:1、1:N、N:1、N:N 和用户指定的任意部分金额均能通过同一个分配模型处理；
+- 每个已分配金额、未分配余额和凭证分录都能追溯至输入 Revision、工作流版本、匹配组和确认人；
+- 所有金额以 CNY 整数分计算，匹配池守恒，凭证借贷平衡；
+- 同一输入和同一已发布工作流版本安全重跑时，不重复占用金额、不重复生成凭证业务记录；
+- 不确定、缺字段、过度分配、来源已变化或规则不完整的数据停在人工处理状态，不伪造结果；
+- 人工确认后既可导出一个固定、版本化的凭证模板，也可由用户明确点击推送到已配置的金蝶云星空测试/目标账套；只保存并回查凭证草稿，不自动提交、审核、过账、付款或报税。
+
 ## 3. 范围
 
 ### 3.1 A03 来源接入
@@ -60,14 +84,15 @@
 - `ADMIN` 配置 App ID、Secret 引用、审批定义 Code 白名单、合同附件控件映射、首次回溯日期和每日同步时间；
 - 默认每天按主机本地时间 02:00 同步，支持 `ADMIN` 和 `OPERATOR` 手动同步；
 - 主机错过计划时间时，启动后只补跑一次，不为每个遗漏周期重复排队；
-- App Secret 必须存 Windows Credential Manager；SQLite 只保存不可反推出 Secret 的 `secret_ref`；
+- App Secret 必须以版本化引用存入 Windows Credential Manager；SQLite 只保存不可反推出 Secret 的 `secret_ref`。配置 Revision CAS 失败时只删除本次新 Secret，成功切换后再清理旧 Secret；
+- 连接存在运行中同步批次时拒绝修改配置；一个完整分窗扫描周期绑定同一连接配置 Revision，防止中途切换附件映射或 Secret；
 - Secret 不进入任务 Payload、日志、审计、Graph、备份或错误响应；
 - 恢复数据库后若 Credential Manager 不存在相应 Secret，连接进入 `REAUTH_REQUIRED`。
 
 #### FR-A03-03 同步、游标与幂等
 
-- 发现窗口使用已完成时间高水位加 48 小时重叠，防止延迟可见和边界遗漏；
-- 单次运行可保存当前 Page Token 以便重试，但持久高水位只能在整页条目全部成为终态后推进；
+- 飞书/Lark 实例查询按审批启动时间过滤，因此同步从管理员配置的首次回溯时间开始，以最长 29 天的启动时间窗口顺序扫描到本次固定结束时间；完整扫描结束后的下一次同步重新从回溯起点开始，确保启动超过 48 小时后才批准的实例不会永久漏失；
+- Page Token 必须与当前 29 天窗口和审批定义绑定；只有该窗口全部分页条目进入终态后才推进窗口游标，进程中断后从原窗口恢复。相同远端 Revision 和相同连接配置 Revision 已归档时跳过；附件映射等连接配置变化后必须重新处理并允许失败附件转为已归档；
 - 每个远端实例以外部 ID 定位，以状态、表单、时间线和附件 Code 的规范 Hash 计算远端 Revision；
 - A03 只有收到 A04 已持久化的 Evidence Revision ID 后，才能把条目标为 `ARCHIVED`；
 - 附件全部归档或明确标记终态失败前，实例不得标记完整成功；
@@ -83,7 +108,8 @@ DISCOVERED → FETCHING → ARCHIVED | PARTIAL | REAUTH_REQUIRED | FAILED
 
 - 401/403 转为 `REAUTH_REQUIRED`，停止依赖该连接的新同步；
 - 429 遵守 `Retry-After`；5xx 和网络超时按有限次数重试；
-- 禁用连接时取消尚未运行的相关任务，正在归档的对象完成当前原子步骤后终止；
+- 禁用连接必须与所有该连接的 `RUNNING` 同步批次转为 `CANCELED` 在同一数据库事务完成，并取消相关 Job；已经开始的单个 Evidence 原子保存可以结束，但旧任务后续 Page Token、游标和批次完成写入必须因批次不再运行而 fail closed；
+- 用户从运行任务页取消正在执行的飞书同步时，Job 与对应同步批次都必须进入 `CANCELED`，清除 Page Token；应用停机使用独立恢复语义，保留批次供租约恢复，不得混同为用户取消；
 - 已归档实例后续撤回或删除时新增 Tombstone，不删除或改写历史 Evidence；
 - 每个错误必须有稳定、脱敏的错误码和可执行的用户说明。
 
@@ -312,7 +338,7 @@ DISCOVERED → FETCHING → ARCHIVED | PARTIAL | REAUTH_REQUIRED | FAILED
 | AC-23 | 银行危险输入 | 公式、宏、外链、压缩炸弹和超大字符串不成为可信会计值 |
 | AC-24 | 发票 | 标准文字 PDF、部分文字、无文字、密码、损坏、未知版式和金额校验测试 |
 | AC-25 | 解析隔离 | 超时、OOM、异常退出时子进程被终止，Evidence 保留且错误稳定 |
-| AC-26 | 飞书同步 | 分页、重复页、Token 过期、401、429、5xx、崩溃重放和附件部分失败 E2E |
+| AC-26 | 飞书同步 | 29 天分窗、长审批周期回扫、跨窗崩溃恢复、显式取消、重复页、Token 过期、401、429、5xx、配置 Revision、Secret 并发和附件 `FAILED → ARCHIVED` E2E |
 | AC-27 | 飞书状态复核 | `APPROVED → CANCELED/REVERTED/删除` 生成 Tombstone 且历史 Evidence 不变 |
 | AC-28 | Secret 运维检查 | Windows 10 桌面会话保存/读取/删除；纯 SSH 无保管库会话时明确失败且不写 SQLite；恢复缺失时进入重新认证 |
 | AC-29 | 备份 v2 | 导入期间备份、对象缺失/篡改、未发布 Manifest、全量恢复与逐步回滚 E2E |
@@ -345,11 +371,13 @@ AC-28 的桌面保存/读取/删除属于首次部署运维检查，不阻断已
 4. LAN HTTP 可被同网段监听；未加密备份和对象可被有主机或介质访问权的人直接读取；
 5. npm 发布、GitHub Release、真实生产连接和对外宣传仍是独立外部动作，不因本 PRD 自动授权。
 
-## 12. 后续阶段
+## 12. 唯一后续阶段与停止规则
 
-- 第三阶段完成 A05 的 OCR/更广文档理解及 A06 匹配分配，必须使用脱敏黄金样本并要求人工确认金额闭合；
-- 第四阶段实现 A07 会计建议与 A08 复核导出，仍不得自动审核、过账、付款或报税；
-- HTTPS、应用级静态加密、银行/发票平台 Connector 和真实 ERP 均需单独立项与 ADR。
+- 唯一已批准的后续阶段是本文件 §14–§21 定义的 Phase 3 企业凭证闭环；除此之外没有已批准的 Phase 4、路线图或候选功能池。
+- Phase 2 已有文字层发票提取保持不变；扫描件 OCR、更广文档理解、合同理解和新增来源不属于 Phase 3。
+- Phase 3 只增加 Auto_Voucher 已验证的金蝶云星空 `GL_VOUCHER` 草稿保存与回查；其他 ERP、通用 ERP 适配、自动提交、审核、过账、付款和报税不属于 Phase 3。
+- 任何未提交实验代码、文档草案、依赖变更、截图、原型或测试桩均不属于“已完成”；必须通过对应验收门禁并冻结 Revision 才能改变状态。
+- 发现新需求时默认记录为“拒绝进入当前范围”。只有用户明确批准 PRD Diff，补充验收条件和非目标，并重新通过对抗性审查后，才能进入实现计划。
 
 ## 13. 第一阶段持续生效的基线
 
@@ -388,3 +416,304 @@ AC-28 的桌面保存/读取/删除属于首次部署运维检查，不阻断已
 | AC-14 | 隐私 | 数据库、Graph、日志和 Doctor 无明文密码/Token |
 | AC-15 | UI 与无障碍 | 核心流程键盘可完成，200% 缩放可用，错误明确 |
 | AC-16 | 工程质量 | 类型、Lint、测试、架构边界和生产构建全部通过 |
+
+## 14. Phase 3 固定范围与核心流程
+
+### 14.1 唯一业务流程
+
+```text
+已验证银行流水 ─┐
+                ├→ 匹配与金额分配 → 凭证规则 → 人工确认 ─┬→ 固定模板导出
+已确认飞书审批 ─┘                                         └→ 明确推送金蝶草稿 → 回查
+```
+
+可视化工作流设计器负责配置和发布这条流程；发布的 `WorkflowDefinition` 必须编译为真实 LangGraph 并驱动运行。画布坐标只影响显示，节点参数、连线和版本决定执行语义。
+
+### 14.2 固定节点目录
+
+Phase 3 只允许以下节点，发布流程必须各包含一次，不允许任意代码、任意网络请求或第三方插件节点：
+
+| 节点类型 | 输入 | 输出 | 可配置项 |
+|---|---|---|---|
+| `BANK_SOURCE` | A05 已验证银行批次/Revision | 银行流水 ID 集合 | 当前批次、日期范围、收支方向 |
+| `APPROVAL_SOURCE` | A03 已归档且人工确认传递的 `APPROVED` 审批 Revision | 审批记录 ID 集合 | 审批定义、字段映射、完成日期范围 |
+| `MATCH_ALLOCATE` | 银行与审批 ID | `READY` 的 `MatchGroup` 草稿、分配草稿和 `Residual` | 只允许本节定义的确定性候选规则；需要人工分配时可 interrupt |
+| `VOUCHER_RULE` | `READY` 分配草稿 | 待确认 `VoucherDraft` | 固定字段条件、科目、摘要和四类辅助核算映射 |
+| `HUMAN_CONFIRM` | 已校验的匹配组与凭证草稿 | 原子确认的 Allocation、MatchGroup 和 Voucher Revision | 无；必须中断并等待授权用户操作 |
+| `FIXED_TEMPLATE_OUTPUT` | 已确认凭证 Revision | 固定模板文件与 Hash | 无模板设计器；只选择本版唯一模板 |
+| `KINGDEE_DRAFT_OUTPUT` | 已确认凭证 Revision 和用户明确推送命令 | 已验证的金蝶外部凭证 ID/编号 | 只选择已配置的金蝶连接和目标环境 |
+
+允许的业务边固定为两类来源进入 `MATCH_ALLOCATE`，之后依次进入 `VOUCHER_RULE → HUMAN_CONFIRM`，再分支到 `FIXED_TEMPLATE_OUTPUT` 和 `KINGDEE_DRAFT_OUTPUT`。金蝶节点只在确认后由用户明确操作，不因确认自动外写。发布时缺节点、重复节点、断边、反向边、自环或其他循环必须拒绝。
+
+### 14.3 Auto_Voucher 直接复用边界
+
+Phase 3 直接使用 `/Users/hungdavy/Auto_Voucher` 已有的飞书审批字段名、凭证头、凭证分录、固定 XLSX 列和金蝶云星空草稿保存/回查合同作为 v1 合同，不再重新设计或要求二次确认。只新增 Auto_Voucher 没有的 `MatchGroup + Allocation + Residual` 和真实 LangGraph 执行关系。
+
+不整体复制 Auto_Voucher 的平台范围或其他 Connector；只复用金蝶云星空这一个已验证输出。其现有银行/审批联合算法仍是 1:1，不能替代本版 N:N 分配模型。
+
+## 15. Phase 3 功能需求
+
+### 15.1 FR-A02-10 可视化工作流设计器
+
+- 单工作区只允许一个活动工作流，但可保留历史已发布版本；每次运行绑定确定版本和内容 Hash。
+- 工作流状态只包含 `DRAFT`、`PUBLISHED`、`RETIRED`；已发布版本不可原地修改，只能复制为新草稿。
+- 用户可以拖动节点、连接允许的边、打开节点配置、保存草稿、验证并发布；位置和缩放不改变执行结果。
+- 发布前必须进行 Schema、固定节点、允许边、DAG、必填参数、字段映射和输出模板校验，并显示全部阻断原因。
+- 未发布草稿不得被计划任务或手动运行选用；同一时刻只允许一个 `PUBLISHED` 版本处于活动状态。
+- `ADMIN` 可编辑和发布；`OPERATOR` 可查看并按活动版本运行；`REVIEWER` 只查看工作流和执行证据。
+- 画布必须支持键盘操作、可见焦点、非颜色状态表达和 200% 缩放；验收使用 DOM、可访问名称、计算样式和真实交互，不以截图代替。
+
+### 15.2 FR-A02-11 真实 LangGraph 编排
+
+- `WorkflowDefinition` 发布后必须由确定性编译器生成 LangGraph；工作流运行不得绕过已发布定义调用一条平行的手写业务流程。
+- LangGraph 负责业务节点顺序、中断、恢复和运行状态；现有 `JobRunner` 只负责有界任务执行、租约、重试和资源 Lane，不再持有第二套业务流程真值。
+- `app.db` 保存工作流定义、输入 Revision、匹配、分配、凭证、确认和审计真值；`graph.db` 只保存 checkpoint，不得作为业务或审计真值。
+- Graph State 只保存业务 ID、Revision、工作流版本、节点状态和稳定错误码，不保存审批正文、银行行全文、凭证全文、附件、Secret 或 Token。
+- 每个有副作用的节点必须使用业务幂等键；幂等键由稳定排序后的输入 Revision、已确认 Allocation 身份、工作流版本和规则版本规范化计算，不受输入顺序影响。崩溃重放不得重复分配金额、重复确认或重复创建凭证业务记录。
+- `MATCH_ALLOCATE` 可在需要人工 N:N/部分分配时 interrupt，`HUMAN_CONFIRM` 必须在最终确认时 interrupt；应用重启后从 checkpoint 恢复到同一分配草稿或待确认 Revision。
+- 上游银行、审批、字段映射、匹配或凭证规则 Revision 改变时，受影响且尚未导出的下游结果转为 `STALE`，不得继续确认或导出。
+- Phase 3 不调用模型，不包含 Prompt、RAG、向量检索或多 Agent；“LangGraph 是核心编排”不等于授权模型做会计判断。
+
+### 15.3 FR-A03-05 飞书审批会计字段规范化
+
+- 只处理 A03 已归档、当前状态为 `APPROVED` 且由用户明确确认传递的审批 Revision；确认传递不修改原始审批 Evidence。
+- 直接把 Auto_Voucher 的 §16.1 字段写入 `ApprovalRecord`；飞书原始动态字段继续保留在 Evidence 中，不要求另建通用字段平台。
+- “业务日期”和“审批完成日期/时间”必须分别保存，不能相互代替。
+- 飞书时间戳先保存原始值，再按企业业务时区 `Asia/Shanghai` 派生完成日期；必须覆盖 UTC/北京时间跨日边界。
+- 金额转换为 CNY 整数分；缺少审批单号、金额、币别、审批状态或业务日期时进入 `NEEDS_REVIEW`，不得进入自动候选。
+- 审批撤回、删除、字段映射变更或来源 Revision 变化时，依赖该审批的匹配和未导出凭证必须失效。
+- 标准化结果保存来源 Evidence Revision、审批定义、实例 ID、字段映射 Revision 和原始字段定位。
+
+### 15.4 FR-A06-01 匹配组与任意部分分配
+
+- 统一使用 `MatchGroup + Allocation + Residual` 表达 1:1、1:N、N:1、N:N 和任意部分匹配，不为不同形态建立平行数据模型。
+- 每个 `Allocation` 必须连接一条银行流水 Revision 和一条审批 Revision，并保存正整数 `amount_cents`、创建方式、创建人和 Revision。
+- 候选只是只读建议，不创建 `Allocation`、不占用金额；草稿分配也不产生全局占用，只有匹配组原子确认后形成的有效 `Allocation` 才占用来源金额。
+- 对每个来源，累计已确认且未反转的有效分配不得超过该来源可分配金额；`Residual = source_amount - sum(confirmed_active_allocations)`，不得为负数。
+- 一个匹配组内银行侧有效分配合计必须等于审批侧有效分配合计且大于零；否则不能进入 `READY`。
+- 允许确认部分闭合组：已分配池必须闭合，未分配余额继续保留为 `Residual`，来源状态为 `PARTIAL`，不得误标为全部结清。
+- 手工界面允许用户选择任意数量的银行和审批记录，并为每一对输入不超过双方余额的金额；支持增、改、删分配并实时重算两侧合计和剩余金额。
+- 自动候选只使用确定性且有界的规则：审批单号精确一致；或币别、绝对金额和规范化客商精确一致。不得对全集做无界组合搜索，不得由模型决定分配金额。
+- 用户可从候选开始调整，也可创建纯手工 N:N 组；分配草稿可以生成凭证预览，但只有 `HUMAN_CONFIRM` 原子确认后的分配和凭证才能占用金额并进入导出。
+- 确认操作使用 Revision CAS，在同一 `app.db` 事务内再次读取双方 Residual、校验守恒并提交全部 Allocation；两个并发请求竞争同一剩余金额时最多一个成功，另一方返回 409 并刷新余额。
+- 匹配组状态固定为 `DRAFT`、`READY`、`CONFIRMED`、`STALE`、`REVERSED`；正常路径为 `DRAFT → READY → CONFIRMED`，依赖变化转 `STALE`。未导出凭证关联的 `CONFIRMED` 组可由授权用户带理由生成 `REVERSED` Revision 并释放占用；已导出组不得在本阶段自动反转。
+- 已确认组不原地改写；调整必须创建新草稿/Revision，并使依赖的未导出凭证失效。
+- 同一组只允许同币别、同收支方向和同一凭证规则版本；不兼容记录必须拆为不同组。
+
+### 15.5 FR-A07-01 确定性凭证草稿
+
+- 从 `READY` 匹配组的分配草稿生成待确认 `VoucherDraft` 预览；凭证金额等于匹配组已闭合的分配池，不使用未分配余额。预览不占用来源金额，也不能导出。
+- 凭证规则直接采用 Auto_Voucher 已有的凭证要素和分录结构，并只读取 §16 的规范字段、活动会计科目和现有 `dimensions`；不重新设计另一套凭证模型。
+- 规则条件、摘要模板、科目和分录必须版本化；不得执行用户脚本，不得让模型自由选择科目。
+- 科目和辅助核算必须匹配当前活动主数据；缺失、停用、未同步或名称不唯一时阻止生成，不自动创建主数据。
+- 每张凭证至少两行；每行不能同时有借方和贷方金额；所有行借方合计必须等于贷方合计。
+- 业务期间必须开放；摘要、科目、金额和规则要求的辅助核算不得为空。
+- 凭证保存工作流版本、匹配组 Revision、分配 Revision、规则 Revision 和全部来源 ID；上游变化后不得静默保留为可导出状态。
+- 同一匹配组 Revision 和规则 Revision 只能产生一个有效凭证业务记录；重跑返回原记录或生成显式新 Revision，不制造重复草稿。
+
+### 15.6 FR-A08-01 人工确认与固定模板导出
+
+- 凭证状态固定为 `DRAFT → READY → CONFIRMED → PUSHED`，任一未推送凭证的依赖变化可转 `STALE`；`STALE` 不得确认、导出或推送。固定模板导出只新增导出记录，不改变凭证业务状态。
+- `REVIEWER` 或 `ADMIN` 可以确认；拥有相应角色的生成者允许自确认，但审计必须记录 `sameActor=true`。
+- 最终确认必须在一个 `app.db` 事务内重读来源 Residual、验证全部输入/规则 Revision、提交有效 Allocation，并同时把 MatchGroup 与 Voucher Revision 转为 `CONFIRMED`、设置 `financeReviewed=true` 和 `pushAllowed=true`；任一步失败全部回滚。
+- 确认页面同时展示来源银行流水、审批、匹配组、分配金额、Residual、规则版本、凭证头、分录和校验结果。
+- 人工编辑凭证必须填写理由并创建新 Revision；编辑后重新执行全部字段、主数据和借贷校验。
+- Phase 3 只提供一个随应用发布、带版本号的固定模板；不提供模板设计器或通用 ERP 字段配置器。
+- 同一凭证 Revision 重复导出不得创建新凭证业务记录；导出记录保存模板版本、文件 Hash、操作者和时间。
+- 导出只产生本地文件；导出和人工确认都不会自动触发金蝶推送。
+
+### 15.7 FR-A08-02 金蝶云星空凭证草稿推送与回查
+
+- 直接复用 Auto_Voucher `KingdeeK3CloudConnector.save_voucher_draft()`、`query_voucher()` 和 `query_voucher_by_reference()` 的合同，只支持金蝶云星空 `GL_VOUCHER`。
+- 金蝶配置直接沿用 Auto_Voucher 字段：`serverUrl`、`acctId`、`username`、`appId`、App Secret 引用、`orgNum`、`ledger`、`voucherFormId`、`localeId`、凭证字、币别/汇率类型和辅助核算字段映射；Secret 只存系统密钥库，不能进入 SQLite、Graph、Job、日志、备份或错误响应。
+- 只有当前 Revision 为 `CONFIRMED`、`financeReviewed=true`、`pushAllowed=true` 的凭证可以推送；`STALE`、未平衡、旧 Revision 或已有已验证外部引用的凭证必须拒绝。
+- 用户点击“推送金蝶”后先执行 Preflight：连接和目标环境一致、账套/账簿正确、会计期间可用、科目存在、必填辅助核算唯一映射、用户具备草稿保存权限。
+- 推送只调用金蝶 `Save("GL_VOUCHER", ...)` 保存草稿，Payload 强制 `IsAutoSubmitAndAudit=false`；不得调用 Submit、Audit、Post、付款或任何等价操作。
+- 每次推送使用由 Voucher Revision 稳定生成的幂等键，并写入 `FSourceBillKey`、`_antiDuplicate` 和凭证摘要标记；同一 Voucher Revision 不得产生第二张金蝶凭证。
+- Save 返回成功时必须取得 `externalId` 和 `externalNumber`，随后通过 View 或幂等标记查询独立回查；只有回查到同一凭证后才把本地状态设为 `PUSHED` 并写入 `externalReference`。
+- 网络超时、响应丢失或 Save 结果不明确时记录 `PUSH_STATUS_UNKNOWN`，不得自动再次 Save；必须先按幂等键回查，确认不存在后才允许授权用户重试。
+- Preflight、推送尝试、请求环境、幂等键、外部 ID/编号、回查结果、操作者和时间写入只追加审计；不得持久化完整请求/响应中的敏感业务正文或凭据。
+- 金蝶返回校验失败、期间关闭、科目/辅助核算不存在或权限不足时保持本地凭证 `CONFIRMED`，显示稳定错误码和可执行说明，不修改已确认凭证内容。
+
+## 16. 冻结数据合同
+
+### 16.1 `ApprovalRecord v1`
+
+直接使用 Auto_Voucher `APPROVAL_PROCESSING_FIELDS` 的字段名和含义：
+
+| 字段 | 显示名 | 类型 |
+|---|---|---|
+| `approvalName` | 审批模板 | 文本 |
+| `reference` | 审批单号 | 文本 |
+| `counterparty` | 供应商 / 客商 | 文本 |
+| `department` | 部门 | 文本 |
+| `project` | 项目 | 文本 |
+| `businessType` | 业务类型 | 文本 |
+| `summary` | 摘要 | 文本 |
+| `date` | 业务日期 | 日期 |
+| `approvalCompletedDate` | 完成日期 | 日期 |
+| `amountCents` | 金额 | CNY 整数分 |
+| `currency` | 币别 | 文本，本版为 `CNY` |
+| `approvalStatus` | 审批状态 | 状态，本版只处理 `APPROVED` |
+
+A03 已有的审批定义 Code、实例 ID、完成时间、Evidence Revision、原始 JSON 和附件追溯继续保持，不重复塞入这组业务字段。
+
+### 16.2 `BankTransaction v1`
+
+| 字段 | 必填 | 语义 |
+|---|---:|---|
+| `transaction_revision_id`、`bank_batch_revision_id` | 是 | 银行行与批次 Revision |
+| `transaction_date`、`amount_cents`、`direction` | 是 | 交易日期、绝对整数分、`INFLOW/OUTFLOW` |
+| `balance_cents` | 是 | 已由 A05 校验的余额 |
+| `transaction_no` | 否 | 银行交易流水号 |
+| `counterparty_name`、`counterparty_account` | 否 | 对方信息；账号按现有隐私边界展示 |
+| `summary` | 是 | 银行交易摘要 |
+| `currency` | 是 | 本版固定为 CNY |
+| `account_tail` | 否 | 当前企业银行账户尾号 |
+| `source_row`、`evidence_revision_id` | 是 | 原始行定位和来源证据 |
+
+### 16.3 `MatchGroup v1`
+
+`MatchGroup` 至少保存 `id`、`workflow_run_id`、`workflow_version`、`status`、`closure_status`、`revision`、`rule_revision`、银行/审批来源 Revision 集合和确认信息。`Allocation` 至少保存两侧来源 Revision、`amount_cents`、创建方式、操作者和 Revision。`Residual` 必须能按每个来源确定性重算并与持久快照对账。
+
+### 16.4 `VoucherDraft v1`
+
+凭证头直接使用 Auto_Voucher 已有字段：`id`、`number`、`company`、`ledger`、`accountingDate`、`period`、`voucherType`、`summary`、`sourceEventIds`、`status`、`ruleVersion`、`appliedRuleId`、`operator`、`financeReviewed`、`pushAllowed`、`externalReference`、`lines`、`validation`。
+
+凭证分录直接使用 Auto_Voucher 已有字段：`lineNo`、`summary`、`accountCode`、`accountName`、`currency`、`exchangeRateType`、`exchangeRate`、`originalAmountCents`、`debitCents`、`creditCents`、`dimensions`、`dimensionRefs`、`requiredDimensions`、`explanation`、`sourceFields`。
+
+N:N 的 `matchGroupId` 和 `allocationIds` 作为凭证与 A06 的关联记录保存，不改名或复制上述凭证字段。
+
+### 16.5 固定模板 v1
+
+直接使用 Auto_Voucher 现有 `凭证` XLSX 的 10 列和顺序：
+
+| 顺序 | 列名 | 来源 |
+|---:|---|---|
+| 1 | 凭证号 | `voucher.number` |
+| 2 | 凭证日期 | `voucher.accountingDate` |
+| 3 | 摘要 | `line.summary` |
+| 4 | 科目编码 | `line.accountCode` |
+| 5 | 科目名称 | `line.accountName` |
+| 6 | 借方 | `line.debitCents` 转两位小数元 |
+| 7 | 贷方 | `line.creditCents` 转两位小数元 |
+| 8 | 部门 | `line.dimensions.department` |
+| 9 | 项目 | `line.dimensions.project` |
+| 10 | 供应商 | `line.dimensions.supplier` |
+
+模板文件、列类型和合成黄金输出纳入版本控制；Phase 3 不再设计第二套导出字段。
+
+### 16.6 `WorkflowDefinition v1`
+
+业务语义固定保存 `id`、`revision`、`status`、`semantic_hash`、七个节点的稳定 ID/类型/参数、允许边集合、创建人、发布时间和活动状态。画布位置、缩放和边折点另存为 `WorkflowLayout`，不进入 `semantic_hash`。同一语义定义重复编译必须产生等价 LangGraph 节点、边和编译 Hash。
+
+### 16.7 `KingdeeDraftPush v1`
+
+输入直接使用已确认 `VoucherDraft`、Voucher Revision、金蝶连接 ID、目标环境和稳定幂等键。成功结果直接使用 Auto_Voucher 返回字段 `externalId`、`externalNumber`、`status`、`rawStatus`，并把独立回查结果写入 `externalReference`。推送尝试状态固定为 `PREFLIGHT_FAILED`、`PUSHING`、`PUSH_STATUS_UNKNOWN`、`VERIFIED`、`FAILED`；只有 `VERIFIED` 可以把凭证标记为 `PUSHED`。
+
+## 17. Phase 3 页面与权限
+
+只新增三个一级业务页面：
+
+1. **工作流设计器**：配置、验证和发布固定节点流程；
+2. **匹配工作台**：查看候选、创建 N:N 组、录入部分分配并确认；
+3. **凭证与输出**：查看、修订、确认凭证，导出固定模板，或明确推送金蝶草稿并查看回查结果。
+
+权限固定如下：
+
+| 能力 | ADMIN | OPERATOR | REVIEWER |
+|---|---:|---:|---:|
+| 查看工作流、匹配、凭证和来源 | 是 | 是 | 是 |
+| 编辑/发布工作流与凭证规则 | 是 | 否 | 否 |
+| 运行工作流、创建/调整匹配 | 是 | 是 | 否 |
+| 调整分配并提交匹配组为 `READY` | 是 | 是 | 否 |
+| 原子确认匹配与凭证、导出固定模板 | 是 | 否 | 是 |
+| 推送金蝶草稿、查询回查结果 | 是 | 否 | 是 |
+
+所有写操作继续验证 Session、CSRF、角色和 Revision CAS；未列出的写操作默认拒绝。
+
+## 18. Phase 3 失败与数据边界
+
+- 飞书不可用、银行批次无效、字段映射缺失、工作流未发布、节点失败、确认等待和导出失败必须有稳定错误码和可恢复状态。
+- 自动候选为空不是系统失败；记录保留在待匹配池并允许人工 N:N/部分分配。
+- Graph checkpoint 损坏时不得根据 checkpoint 重建业务事实；从 `app.db` 的运行、节点和业务 Revision 对账后重新开始未完成节点。
+- 匹配、凭证和导出进入 v2 备份；固定模板程序文件随应用发布，导出的用户文件由用户管理。
+- 金蝶连接配置、Secret 引用、推送尝试和外部引用进入 `app.db`/备份；App Secret 本体不进入数据库或备份。
+- Phase 3 业务网络出口只有既有飞书和已配置金蝶云星空；金蝶响应不得把 Session、Cookie、App Secret 或完整凭证正文写入日志、Graph 或错误响应。
+- 日志、Graph、Job、审计 metadata、诊断和错误响应不得包含银行/审批全文、完整账号、凭证分录全文、Secret 或 Token。
+- 既有 LAN HTTP、无应用级静态加密和 Credential Manager 桌面检查边界继续生效，不因 Phase 3 被描述为已解决。
+
+## 19. Phase 3 验收门禁
+
+| ID | 场景 | 通过证据 |
+|---|---|---|
+| AC-34 | 冻结基线回归 | Phase 1/2 全部门禁继续通过；冻结能力没有被重写、降级或误报 |
+| AC-35 | 审批规范化 | Auto_Voucher 的字段名按 §16.1 直接落库，业务日期/完成日期分离，缺字段和撤回正确阻断 |
+| AC-36 | 可执行画布 | UI 发布定义后，改变允许的节点参数/边会改变对应 LangGraph 运行；仅移动节点不会改变结果 |
+| AC-37 | 工作流版本 | 草稿不能运行，已发布版本不可修改，一次运行始终绑定同一版本和 Hash |
+| AC-38 | Graph 恢复 | 每个节点终止/重启、人工 interrupt 和 checkpoint 恢复不重复副作用，`app.db` 可独立对账 |
+| AC-39 | 1:1 匹配 | 一条银行与一条审批全额分配，双方 Residual 为零 |
+| AC-40 | 1:N 匹配 | 一条银行分配到多条审批，分配池闭合且逐来源余额正确 |
+| AC-41 | N:1 匹配 | 多条银行分配到一条审批，分配池闭合且逐来源余额正确 |
+| AC-42 | N:N 匹配 | 多条银行与多条审批通过 Allocation 边闭合，无来源被重复占用 |
+| AC-43 | 任意部分匹配 | 已分配池可确认并生成对应金额凭证，未分配 Residual 保持开放且不误标结清 |
+| AC-44 | 守恒与并发 | 负数、零、越界、跨币别、方向冲突、两侧不等和并发超额分配全部拒绝 |
+| AC-45 | 上游失效 | 银行/审批/映射/工作流/规则 Revision 改变使受影响未导出结果 `STALE` |
+| AC-46 | 凭证合同 | 黄金 Fixture 生成 §16.4 全部必填字段；科目、期间、辅助核算和借贷校验全部通过 |
+| AC-47 | 人工确认 | MatchGroup/Allocation/Voucher 在同一事务确认；未确认不占用且不能导出或推送；自确认记录 `sameActor=true`；越权、旧 Revision 和重复确认被拒绝 |
+| AC-48 | 固定模板 | Auto_Voucher 的 10 列 XLSX 列名、顺序、类型和值保持一致；同一凭证 Revision 重复导出不创建重复业务记录 |
+| AC-49 | 企业端到端 | 当前企业一个完整自然月脱敏数据完成“银行+审批→匹配→凭证→输出”，验证 Auto_Voucher 同款 XLSX，并把至少一张人工确认凭证推送至金蝶测试账套且回查一致 |
+| AC-50 | UI 与无障碍 | 三个新页面完成 Chrome/Playwright DOM 交互、键盘、焦点、错误、200% 缩放和长内容检查 |
+| AC-51 | 性能与安全 | 企业真实月度数据和 5 用户混合操作无锁错误、丢失更新、重复凭证或敏感数据泄露 |
+| AC-52 | 工程与对抗审查 | 类型、Lint、测试、架构、构建全绿；新增模块 P0/P1 对抗问题清零并保留报告 |
+| AC-53 | 月度对账 | 每条被已发布 `BANK_SOURCE` 选中的银行流水均为未匹配、部分匹配或完全匹配之一；未被选中的行可追溯到固定来源筛选条件；数量、原金额、已分配、Residual 和凭证金额可反向对账 |
+| AC-54 | 金蝶草稿推送 | 真实测试账套 Preflight 通过；人工确认后只调用 `GL_VOUCHER Save`，`IsAutoSubmitAndAudit=false`，返回外部 ID/编号并独立回查一致 |
+| AC-55 | 金蝶幂等与未知状态 | 重复点击、节点重试、进程重启和响应丢失不创建第二张凭证；未知状态先回查，确认不存在后才允许重试 |
+
+AC-49 的“完整自然月”在验收时记录数据范围、记录数、审批定义和规则版本。只用模拟数据、截图或单条 happy path 不能关闭该门禁。
+
+## 20. Phase 3 明确不在范围
+
+- OCR、扫描发票、OFD/XML、合同理解和新增文档解析；
+- 银行 API、银企直连、网银 RPA、税务平台和新增业务来源；
+- 通用 Connector、插件市场、自定义代码节点、任意网络节点和工作流脚本语言；
+- 多企业、多账套、SaaS、移动端、公网部署和面向外部客户的配置平台；
+- N:N 全集的无界组合搜索、模型自动决定分配金额或模型自主选择会计科目；
+- 外币匹配、汇兑损益、手续费容差、模糊平差、退款和自动冲销；Phase 3 匹配只支持 CNY 精确整数分；
+- 第二个导出模板、模板设计器、其他 ERP、通用 ERP Connector/字段映射，以及金蝶除草稿 Save/查询之外的写操作；
+- 自动提交、审核、过账、付款、报税、结账或自动生成冲销凭证；
+- 新的角色体系、组织架构、消息通知、仪表盘、BI、RAG、向量检索和多 Agent；
+- HTTPS、应用级静态加密、对象 GC 和其他与闭环无直接关系的基础设施升级。
+
+## 21. 变更控制、对抗性审查与完成定义
+
+### 21.1 禁止静默增项
+
+任何实现建议、技术便利、参考项目功能或开发中顺手增加的页面，若未出现在 §14–§19，默认不做。新增功能必须同时满足：
+
+1. 用户明确批准；
+2. 形成独立 PRD Diff，说明为什么现有闭环无法工作；
+3. 增加或修改可测试验收条件和明确非目标；
+4. 进行新的对抗性审查并清零 P0/P1；
+5. 不得用“以后可能需要”作为进入当前阶段的理由。
+
+### 21.2 两次对抗性审查
+
+- **需求冻结审查**：实现前检查范围膨胀、数据合同缺失、双编排、金额守恒、权限、幂等、失效和验收可测性；结果写入 [`PRD-review.md`](PRD-review.md)。
+- **模块完成审查**：A02 工作流扩展、A06、A07、A08 各自完成后，独立审查其公开 Port、表所有权、禁止依赖、失败恢复、边界测试和是否引入未批准功能。P0/P1 未清零不得进入下一模块。
+- **最终闭环审查**：AC-34–AC-55 全部有证据后，再检查真实企业数据、Graph/业务真值分离、重复运行、部分余额、凭证追溯、固定模板和金蝶草稿回查；审查通过不等于发布或生产上线。
+
+实现顺序受以下 Gate 约束：
+
+1. `G0 基线锁定`：冻结 Phase 2 Revision、验收报告和不修改范围；
+2. `G1 合同锁定`：直接复用 Auto_Voucher 的审批字段、凭证要素、10 列固定 XLSX 和金蝶云星空草稿保存/回查合同；本版 PRD 写入后即通过，不再要求二次设计；
+3. `G2 架构审查`：冻结 WorkflowDefinition、LangGraph/JobRunner/app.db 边界和 Allocation 不变量；
+4. `G3 模块门禁`：工作流、匹配、凭证、复核导出逐模块实现并独立清零 P0/P1；
+5. `G4 集成门禁`：崩溃、重试、并发、Revision 失效、备份恢复和范围审计通过；
+6. `G5 企业试运行`：AC-34–AC-55 全部有证据后才可报告企业闭环 GO。
+
+### 21.3 “完成”的唯一含义
+
+功能只有在代码、迁移、正反测试、架构门禁、DOM 交互、Windows 10 运行和相应真实 Fixture 证据全部通过并冻结 Revision 后才算完成。文档、Schema、接口、原型、构建通过、部分测试、未提交工作树或模拟 Adapter 均不能单独改变完成状态。
+
+本 PRD 完成后允许停止开发：不存在必须继续建设的平台路线图。提交、push、发布、部署、企业生产切换和对外宣传仍是独立动作，需分别授权和验收。

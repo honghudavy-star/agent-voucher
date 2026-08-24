@@ -132,7 +132,9 @@ export interface CanonicalEvidenceEnvelope {
 }
 
 export interface ArchivedSourceItem {
+  readonly connectorId: ConnectorId;
   readonly instanceCode: InstanceCode;
+  readonly configRevision: number;
   readonly formEvidenceRevisionId: EvidenceRevisionId;
   readonly attachmentEvidenceRevisionIds: readonly EvidenceRevisionId[];
   readonly remoteRevisionHash: string;

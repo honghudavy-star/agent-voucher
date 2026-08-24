@@ -10,11 +10,15 @@ import { InvoiceFieldSchema, InvoiceExtractionStatusSchema, validateInvoiceField
 import { runParserSubprocess, type ParserLauncherOptions, ParserProcessError } from "./parser-launcher.js";
 import { type EvidenceRevisionId } from "./contracts.js";
 
+const RawCellValueSchema = z.union([
+  z.string(), z.number(), z.boolean(), z.null(), z.object({ formula: z.string().min(1).max(4096) }),
+]);
+
 const BankParsedRowSchema = z.object({
   sourceRow: z.number().int().positive(), transactionDate: z.string(), amountCents: z.number().int().safe(),
   balanceCents: z.number().int().safe().nullable(), transactionId: z.string().optional(), currency: z.literal("CNY"),
   counterpartyName: z.string().optional(), counterpartyAccount: z.string().optional(), summary: z.string().optional(),
-  accountTail: z.string().optional(), rawCells: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  accountTail: z.string().optional(), rawCells: z.record(z.string(), RawCellValueSchema),
   issues: z.array(z.string()), possibleDuplicate: z.boolean(),
 });
 const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {

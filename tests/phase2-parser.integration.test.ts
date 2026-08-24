@@ -109,6 +109,41 @@ describe("Phase 2 parser subprocess", () => {
       });
       expect(offsetResult.rows).toHaveLength(1); expect(offsetResult.rows[0]).toMatchObject({ sourceRow: 6, amountCents: 100, balanceCents: 100 });
 
+      const formulaWorkbook = XLSX.utils.book_new();
+      const formulaSheet = XLSX.utils.aoa_to_sheet([
+        ["日期", "金额", "余额"], ["2026-08-01", "1.00", null], ["2026-08-02", null, "2.00"],
+      ]);
+      formulaSheet.C2 = { t: "n", f: "B2", v: 1 };
+      formulaSheet.B3 = { t: "n", f: "B2", v: 1 };
+      XLSX.utils.book_append_sheet(formulaWorkbook, formulaSheet, "公式流水");
+      const formulaFile = join(root, "bank-formula.xlsx");
+      const formulaBytes = XLSX.write(formulaWorkbook, { bookType: "xlsx", type: "buffer" }) as Buffer;
+      await writeFile(formulaFile, formulaBytes);
+      const formulaProfile = {
+        ...profile, id: "formula-mapping", sourceKind: "SPREADSHEET" as const, sheetName: "公式流水", csv: undefined,
+        columns: { amountMode: "SIGNED" as const, transactionDate: "日期", amount: "金额", balance: "余额" },
+      };
+      const formulaResult = await service.parseBank({
+        evidenceRevisionId: EvidenceRevisionIdSchema.parse("evd-formula"), filePath: formulaFile,
+        contentSha256: createHash("sha256").update(formulaBytes).digest("hex"),
+      }, formulaProfile);
+      expect(formulaResult.validation.valid).toBe(false);
+      const formulaRow = formulaResult.rows[0]!;
+      expect(formulaRow.balanceCents).toBeNull();
+      expect(formulaRow.issues).toContain("INVALID_BALANCE:FORMULA");
+      expect(formulaRow.rawCells["余额"]).toEqual({ formula: "B2" });
+      expect(formulaResult.rows[1]?.issues).toContain("INVALID_AMOUNT:FORMULA");
+      expect(formulaResult.rows[1]?.rawCells["金额"]).toEqual({ formula: "B2" });
+      const formulaMappingRevision = await service.saveMapping(actor, formulaProfile, formulaResult.headerSignature);
+      const formulaImportId = await service.persistBankImport(
+        actor, EvidenceRevisionIdSchema.parse("evd-formula"), formulaMappingRevision, formulaResult,
+      );
+      const persistedFormulaRows = await service.listBankTransactions(formulaImportId);
+      const persistedBalanceFormula = JSON.parse(String(persistedFormulaRows[0]?.data_json)) as { rawCells: Record<string, unknown> };
+      const persistedAmountFormula = JSON.parse(String(persistedFormulaRows[1]?.data_json)) as { rawCells: Record<string, unknown> };
+      expect(persistedBalanceFormula.rawCells["余额"]).toEqual({ formula: "B2" });
+      expect(persistedAmountFormula.rawCells["金额"]).toEqual({ formula: "B2" });
+
       const baseField = { rawText: "fixture", page: 1, position: { x: 0, y: 0, width: 1, height: 1 }, ambiguous: false, validationErrors: [] };
       const invoiceId = await service.persistInvoiceExtraction(actor, EvidenceRevisionIdSchema.parse("invoice-rev"), {
         parserVersion: "invoice-text-v1", status: "VALIDATED", validationErrors: [], fields: [

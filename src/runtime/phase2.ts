@@ -17,7 +17,7 @@ import {
 import { EvidenceVaultService } from "@agent-voucher/evidence-vault";
 import { DocumentUnderstandingService, ParserProcessError, type BankMappingProfile, type BankParserResult, type EvidenceRevisionId } from "@agent-voucher/document-understanding";
 import type { ActorSnapshot, DatabasePort } from "@agent-voucher/shared-kernel";
-import { QueueFullError } from "@agent-voucher/shared-kernel";
+import { ConflictError, QueueFullError } from "@agent-voucher/shared-kernel";
 import type { JobHandlerRegistry, RuntimeAuditService } from "@agent-voucher/runtime-audit";
 import { packageRoot } from "./package-root.js";
 
@@ -25,6 +25,7 @@ const SYSTEM_ACTOR: ActorSnapshot = { userId: "SYSTEM", username: "phase2-schedu
 const FeishuJobSchema = z.object({ connectorId: z.string().min(1), trigger: z.enum(["SCHEDULED", "MANUAL", "STARTUP_CATCHUP", "RECONCILIATION"]) });
 const BankJobSchema = z.object({ evidenceId: z.string().min(1), mappingRevisionId: z.string().min(1), overrideReason: z.string().min(1).max(500).optional() });
 const InvoiceJobSchema = z.object({ evidenceId: z.string().min(1) });
+const FEISHU_START_WINDOW_MS = 29 * 24 * 60 * 60_000;
 
 async function* webChunks(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
   const reader = stream.getReader();
@@ -196,15 +197,30 @@ export class Phase2Runtime {
     safeCheck(); this.scheduler = setInterval(safeCheck, 60_000);
   }
 
-  async syncFeishu(actor: ActorSnapshot, connectorId: string, trigger: "SCHEDULED" | "MANUAL" | "STARTUP_CATCHUP" | "RECONCILIATION", signal?: AbortSignal, allowCursorRestart = true): Promise<Record<string, unknown>> {
+  async syncFeishu(
+    actor: ActorSnapshot,
+    connectorId: string,
+    trigger: "SCHEDULED" | "MANUAL" | "STARTUP_CATCHUP" | "RECONCILIATION",
+    signal?: AbortSignal,
+    allowCursorRestart = true,
+    cycleEndMs = Date.now(),
+    cycleCursorMs?: number,
+    cycleConfigRevision?: number,
+  ): Promise<Record<string, unknown>> {
     const { service, store } = this.acquisition(actor, signal); const connector = asConnectorId(connectorId);
     const config = await store.get(connector); if (!config) throw new Error("FEISHU_CONNECTION_NOT_FOUND");
-    const state = await store.getSyncState(connectorId); const nowMs = Date.now();
-    const initial = Date.parse(config.initialLookbackFrom); const high = state?.highWatermarkMs ? Number(state.highWatermarkMs) : initial;
+    const boundConfigRevision = cycleConfigRevision ?? config.revision;
+    if (config.revision !== boundConfigRevision) throw new ConflictError("FEISHU_CONFIG_CHANGED_DURING_SYNC");
+    const state = await store.getSyncState(connectorId); const nowMs = cycleEndMs;
+    const initial = Math.min(Date.parse(config.initialLookbackFrom), nowMs);
     const runningBatch = await store.findRunningBatch(connectorId);
-    const startMs = runningBatch?.windowStartMs ?? String(Math.max(initial, high - config.overlapHours * 60 * 60_000));
-    const endMs = runningBatch?.windowEndMs ?? String(nowMs);
-    const batchId = runningBatch?.id ?? await store.startBatch(connectorId, trigger, startMs, endMs);
+    const cycleStart = cycleCursorMs ?? initial;
+    // Lark/Feishu filters by instance start time, not approval completion time, and
+    // accepts bounded start-time ranges. Walk the configured horizon in 29-day
+    // windows, then begin again on the next run; terminal revisions are skipped.
+    const startMs = runningBatch?.windowStartMs ?? String(cycleStart);
+    const endMs = runningBatch?.windowEndMs ?? String(Math.min(nowMs, cycleStart + FEISHU_START_WINDOW_MS));
+    const batchId = runningBatch?.id ?? await store.startBatch(connectorId, config.revision, trigger, startMs, endMs);
     try {
       const configuredResumeIndex = state?.inFlightApprovalCode
         ? config.approvalCodes.findIndex((code) => code === state.inFlightApprovalCode) : -1;
@@ -217,8 +233,8 @@ export class Phase2Runtime {
           const page = await service.discoverApproved(connector, { approvalCode, startTime: startMs, endTime: endMs, pageSize: 100, ...(pageToken ? { pageToken } : {}) });
           for (const instance of page.items) {
             const remoteHash = canonicalInstanceHash(instance);
-            await store.recordDiscovered(batchId, connectorId, instance, remoteHash);
-            await service.archiveApproved(connector, instance);
+            const discovered = await store.recordDiscovered(batchId, connectorId, config.revision, instance, remoteHash);
+            if (!discovered.alreadyTerminal) await service.archiveApproved(connector, instance);
           }
           pageToken = page.nextPageToken;
           const nextApprovalCode = pageToken ? approvalCode : config.approvalCodes[approvalIndex + 1];
@@ -231,17 +247,34 @@ export class Phase2Runtime {
         await store.recordReconciliation(connectorId, result);
         if (result.tombstone) await this.evidence.tombstoneSourceTree(actor, result.instanceCode, `${result.status}:${endMs}`);
       }
-      const lastTracked = tracked.at(-1); if (lastTracked) await store.advanceReconciliationCursor(connectorId, lastTracked);
+      const lastTracked = tracked.at(-1); if (lastTracked) await store.advanceReconciliationCursor(connectorId, batchId, config.revision, lastTracked);
       const counts = await store.batchCounts(batchId); const status = counts.failed === 0 ? "SUCCEEDED" : "PARTIAL";
+      const finalWindow = Number(endMs) >= nowMs;
+      await store.advanceSyncState(connectorId, batchId, config.revision, endMs, finalWindow ? zonedDateTime(new Date(nowMs), config.timeZone).date : undefined);
       await store.completeBatch(batchId, status, counts);
-      await store.advanceSyncState(connectorId, endMs, zonedDateTime(new Date(), config.timeZone).date);
-      return { batchId, status, ...counts, reconciled: reconciled.length };
+      const current = { batchId, batchIds: [batchId], status, ...counts, reconciled: reconciled.length };
+      if (!finalWindow) {
+        const next = await this.syncFeishu(actor, connectorId, trigger, signal, true, nowMs, Number(endMs), boundConfigRevision);
+        const nextBatchIds = Array.isArray(next.batchIds) ? next.batchIds.map(String) : [String(next.batchId)];
+        return {
+          batchId, batchIds: [batchId, ...nextBatchIds],
+          status: status === "PARTIAL" || next.status === "PARTIAL" ? "PARTIAL" : "SUCCEEDED",
+          archived: counts.archived + Number(next.archived ?? 0), failed: counts.failed + Number(next.failed ?? 0),
+          reconciled: reconciled.length + Number(next.reconciled ?? 0),
+        };
+      }
+      return current;
     } catch (error: unknown) {
+      const cancellation = signal?.aborted && signal.reason instanceof Error && signal.reason.message === "JOB_CANCEL_REQUESTED";
+      if (cancellation) {
+        await store.cancelBatch(connectorId, batchId, "JOB_CANCEL_REQUESTED");
+        throw signal.reason;
+      }
       const cursorMayBeExpired = allowCursorRestart && Boolean(state?.inFlightPageToken) && error instanceof ConnectorRequestError
         && error.failure.category === "PERMANENT" && (error.failure.code === "FEISHU_HTTP_400" || error.failure.code.startsWith("FEISHU_API_"));
       if (cursorMayBeExpired) {
         await store.savePageCheckpoint(connectorId, batchId, config.approvalCodes[0], undefined);
-        return this.syncFeishu(actor, connectorId, trigger, signal, false);
+        return this.syncFeishu(actor, connectorId, trigger, signal, false, nowMs, cycleCursorMs, boundConfigRevision);
       }
       const counts = await store.batchCounts(batchId);
       if (error instanceof ConnectorRequestError && error.failure.category === "REAUTH_REQUIRED") {

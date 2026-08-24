@@ -1,5 +1,5 @@
 import type { ActorSnapshot, DatabasePort, SqlStatement, WriteCommand } from "@agent-voucher/shared-kernel";
-import { newId, nowIso } from "@agent-voucher/shared-kernel";
+import { ConflictError, newId, nowIso } from "@agent-voucher/shared-kernel";
 import type { ConnectionConfigStore, SourceArchivePort } from "./contracts.js";
 import { FeishuConnectionConfigSchema } from "./schemas.js";
 import type { ArchivedSourceItem, FeishuConnectionConfig, FeishuInstance, InstanceCode, ReconciliationResult } from "./types.js";
@@ -17,9 +17,17 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
   async save(config: FeishuConnectionConfig, expectedRevision?: number): Promise<FeishuConnectionConfig> {
     const parsed = FeishuConnectionConfigSchema.parse(config); const timestamp = nowIso();
     const exists = await this.db.read<{ revision: number } | undefined>({ sql: "SELECT revision FROM conn_connector WHERE id = ?", params: [parsed.connectorId], mode: "get" });
+    if (exists) {
+      const running = await this.db.read<{ id: string } | undefined>({
+        sql: "SELECT id FROM src_sync_batch WHERE connector_id = ? AND status = 'RUNNING' LIMIT 1", params: [parsed.connectorId], mode: "get",
+      });
+      if (running) throw new ConflictError("FEISHU_SYNC_IN_PROGRESS");
+    }
     const statements: SqlStatement[] = exists ? [
       { sql: `UPDATE conn_connector SET display_name = ?, status = ?, secret_ref = ?, revision = revision + 1, updated_at = ?
-              WHERE id = ? AND revision = ?`, params: [parsed.displayName, parsed.status, parsed.secretReference, timestamp, parsed.connectorId, expectedRevision ?? exists.revision], expectChanges: 1 },
+              WHERE id = ? AND revision = ? AND NOT EXISTS (
+                SELECT 1 FROM src_sync_batch WHERE connector_id = ? AND status = 'RUNNING'
+              )`, params: [parsed.displayName, parsed.status, parsed.secretReference, timestamp, parsed.connectorId, expectedRevision ?? exists.revision, parsed.connectorId], expectChanges: 1 },
       { sql: `UPDATE conn_feishu_config SET app_id = ?, approval_codes_json = ?, attachment_control_ids_json = ?,
               initial_lookback_from = ?, daily_sync_time = ?, time_zone = ?, overlap_hours = ?, platform = ? WHERE connector_id = ?`, params: [
         parsed.appId, JSON.stringify(parsed.approvalCodes), JSON.stringify(parsed.attachmentControlIds), parsed.initialLookbackFrom,
@@ -88,13 +96,17 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
     } : undefined);
   }
 
-  async advanceSyncState(connectorId: string, highWatermarkMs: string, localDate: string): Promise<void> {
+  async advanceSyncState(connectorId: string, batchId: string, configRevision: number, highWatermarkMs: string, localDate?: string): Promise<void> {
     const timestamp = nowIso();
     await this.db.write(command(this.actor, "SOURCE_CURSOR_ADVANCED", "connector", connectorId, [{
       sql: `UPDATE conn_feishu_config SET high_watermark_ms = ?, in_flight_page_token = NULL, in_flight_approval_code = NULL,
-            last_scheduled_local_date = ?, last_success_at = ? WHERE connector_id = ?`,
-      params: [highWatermarkMs, localDate, timestamp, connectorId], expectChanges: 1,
-    }], { localDate }));
+            last_scheduled_local_date = COALESCE(?, last_scheduled_local_date), last_success_at = ?
+            WHERE connector_id = ? AND EXISTS (
+              SELECT 1 FROM conn_connector c JOIN src_sync_batch b ON b.connector_id = c.id
+              WHERE c.id = ? AND c.revision = ? AND c.status = 'ACTIVE' AND b.id = ? AND b.status = 'RUNNING'
+            )`,
+      params: [highWatermarkMs, localDate ?? null, timestamp, connectorId, connectorId, configRevision, batchId], expectChanges: 1,
+    }], { localDate: localDate ?? null, configRevision }));
   }
 
   async savePageCheckpoint(connectorId: string, batchId: string, approvalCode: string | undefined, pageToken: string | undefined): Promise<void> {
@@ -106,10 +118,28 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
   }
 
   async markDisabled(connectorId: FeishuConnectionConfig["connectorId"]): Promise<void> {
+    const timestamp = nowIso();
     await this.db.write(command(this.actor, "FEISHU_CONNECTION_DISABLED", "connector", connectorId, [{
       sql: "UPDATE conn_connector SET status = 'DISABLED', revision = revision + 1, updated_at = ? WHERE id = ? AND status != 'DISABLED'",
-      params: [nowIso(), connectorId], expectChanges: 1,
+      params: [timestamp, connectorId], expectChanges: 1,
+    }, {
+      sql: "UPDATE conn_feishu_config SET in_flight_page_token = NULL, in_flight_approval_code = NULL WHERE connector_id = ?",
+      params: [connectorId], expectChanges: 1,
+    }, {
+      sql: `UPDATE src_sync_batch SET status = 'CANCELED', completed_at = ?, last_error_code = 'CONNECTOR_DISABLED'
+            WHERE connector_id = ? AND status = 'RUNNING'`, params: [timestamp, connectorId],
     }]));
+  }
+
+  async cancelBatch(connectorId: string, batchId: string, code: string): Promise<void> {
+    const timestamp = nowIso();
+    await this.db.write(command(this.actor, "SOURCE_SYNC_CANCELED", "sync_batch", batchId, [{
+      sql: "UPDATE conn_feishu_config SET in_flight_page_token = NULL, in_flight_approval_code = NULL WHERE connector_id = ?",
+      params: [connectorId], expectChanges: 1,
+    }, {
+      sql: `UPDATE src_sync_batch SET status = 'CANCELED', completed_at = ?, page_token = NULL, last_error_code = ?
+            WHERE id = ? AND connector_id = ? AND status = 'RUNNING'`, params: [timestamp, code, batchId, connectorId],
+    }], { code }));
   }
 
   async markReauthRequired(connectorId: string, code: string): Promise<void> {
@@ -119,11 +149,13 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
     }], { code }));
   }
 
-  async startBatch(connectorId: string, triggerType: "SCHEDULED" | "MANUAL" | "STARTUP_CATCHUP" | "RECONCILIATION", startMs: string, endMs: string): Promise<string> {
+  async startBatch(connectorId: string, configRevision: number, triggerType: "SCHEDULED" | "MANUAL" | "STARTUP_CATCHUP" | "RECONCILIATION", startMs: string, endMs: string): Promise<string> {
     const id = newId(); await this.db.write(command(this.actor, "SOURCE_SYNC_STARTED", "sync_batch", id, [{
       sql: `INSERT INTO src_sync_batch(id, connector_id, trigger_type, status, window_start_ms, window_end_ms, started_at)
-            VALUES (?, ?, ?, 'RUNNING', ?, ?, ?)`, params: [id, connectorId, triggerType, startMs, endMs, nowIso()],
-    }], { triggerType })); return id;
+            SELECT ?, id, ?, 'RUNNING', ?, ?, ? FROM conn_connector
+            WHERE id = ? AND revision = ? AND status = 'ACTIVE'`,
+      params: [id, triggerType, startMs, endMs, nowIso(), connectorId, configRevision], expectChanges: 1,
+    }], { triggerType, configRevision })); return id;
   }
 
   findRunningBatch(connectorId: string): Promise<{ id: string; windowStartMs: string; windowEndMs: string } | undefined> {
@@ -133,19 +165,21 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
     }).then((row) => row ? { id: row.id, windowStartMs: row.window_start_ms, windowEndMs: row.window_end_ms } : undefined);
   }
 
-  async recordDiscovered(batchId: string, connectorId: string, instance: FeishuInstance, remoteRevisionHash: string): Promise<string> {
-    const existing = await this.db.read<{ id: string; sync_batch_id: string | null; source_status: string } | undefined>({
-      sql: "SELECT id, sync_batch_id, source_status FROM src_source_item WHERE connector_id = ? AND external_id = ? AND remote_revision_hash = ?",
+  async recordDiscovered(batchId: string, connectorId: string, configRevision: number, instance: FeishuInstance, remoteRevisionHash: string): Promise<{ id: string; alreadyTerminal: boolean }> {
+    const existing = await this.db.read<{ id: string; sync_batch_id: string | null; source_status: string; processed_config_revision: number } | undefined>({
+      sql: "SELECT id, sync_batch_id, source_status, processed_config_revision FROM src_source_item WHERE connector_id = ? AND external_id = ? AND remote_revision_hash = ?",
       params: [connectorId, instance.instanceCode, remoteRevisionHash], mode: "get",
     });
     if (existing) {
-      if (existing.sync_batch_id !== batchId && !["ARCHIVED", "PARTIAL"].includes(existing.source_status)) {
+      const alreadyTerminal = ["ARCHIVED", "PARTIAL"].includes(existing.source_status) && existing.processed_config_revision === configRevision;
+      if (existing.sync_batch_id !== batchId && !alreadyTerminal) {
         await this.db.write(command(this.actor, "SOURCE_ITEM_REATTACHED", "source_item", existing.id, [
-          { sql: "UPDATE src_source_item SET sync_batch_id = ? WHERE id = ?", params: [batchId, existing.id], expectChanges: 1 },
+          { sql: `UPDATE src_source_item SET sync_batch_id = ?, source_status = CASE WHEN processed_config_revision != ? THEN 'DISCOVERED' ELSE source_status END,
+                  revision = revision + 1, observed_at = ? WHERE id = ?`, params: [batchId, configRevision, nowIso(), existing.id], expectChanges: 1 },
           { sql: "UPDATE src_sync_batch SET discovered_count = discovered_count + 1 WHERE id = ? AND status = 'RUNNING'", params: [batchId], expectChanges: 1 },
-        ], { previousBatchId: existing.sync_batch_id }));
+        ], { previousBatchId: existing.sync_batch_id, configRevision }));
       }
-      return existing.id;
+      return { id: existing.id, alreadyTerminal };
     }
     const id = newId(); await this.db.write(command(this.actor, "SOURCE_ITEM_DISCOVERED", "source_item", id, [{
       sql: `INSERT INTO src_source_item(id, connector_id, sync_batch_id, external_id, approval_code, remote_status,
@@ -153,13 +187,14 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
         id, connectorId, batchId, instance.instanceCode, instance.approvalCode, instance.status, remoteRevisionHash, nowIso(),
       ] },
       { sql: "UPDATE src_sync_batch SET discovered_count = discovered_count + 1 WHERE id = ?", params: [batchId], expectChanges: 1 },
-    ], { approvalCode: instance.approvalCode })); return id;
+    ], { approvalCode: instance.approvalCode })); return { id, alreadyTerminal: false };
   }
 
   async recordArchived(item: ArchivedSourceItem): Promise<void> {
     const timestamp = nowIso();
     const sourceItem = await this.db.read<{ id: string; sync_batch_id: string | null; source_status: string }>({
-      sql: "SELECT id, sync_batch_id, source_status FROM src_source_item WHERE external_id = ? AND remote_revision_hash = ?", params: [item.instanceCode, item.remoteRevisionHash], mode: "get",
+      sql: "SELECT id, sync_batch_id, source_status FROM src_source_item WHERE connector_id = ? AND external_id = ? AND remote_revision_hash = ?",
+      params: [item.connectorId, item.instanceCode, item.remoteRevisionHash], mode: "get",
     });
     const statements: SqlStatement[] = [];
     if (sourceItem.sync_batch_id && !["ARCHIVED", "PARTIAL"].includes(sourceItem.source_status)) statements.push({
@@ -167,15 +202,29 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
             WHERE id = ? AND status = 'RUNNING'`,
       params: [item.status === "ARCHIVED" ? 1 : 0, item.status === "PARTIAL" ? 1 : 0, sourceItem.sync_batch_id], expectChanges: 1,
     });
-    statements.push({
-      sql: `UPDATE src_source_item SET source_status = ?, form_evidence_revision_id = ?, archived_at = ?, revision = revision + 1
-            , last_error_code = ? WHERE external_id = ? AND remote_revision_hash = ?`, params: [item.status, item.formEvidenceRevisionId, timestamp, item.failures.map((failure) => failure.code).join(",").slice(0, 500) || null, item.instanceCode, item.remoteRevisionHash], expectChanges: 1 },
-    );
     for (const attachment of item.attachmentOutcomes) statements.push({
-      sql: `INSERT OR IGNORE INTO src_source_attachment(id, source_item_id, control_id, remote_path_hash,
-            evidence_revision_id, status, last_error_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO src_source_attachment(id, source_item_id, control_id, remote_path_hash,
+            evidence_revision_id, status, last_error_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_item_id, control_id, remote_path_hash) DO UPDATE SET
+              evidence_revision_id = CASE WHEN excluded.status = 'ARCHIVED' THEN excluded.evidence_revision_id ELSE src_source_attachment.evidence_revision_id END,
+              status = CASE WHEN src_source_attachment.status = 'ARCHIVED' OR excluded.status = 'ARCHIVED' THEN 'ARCHIVED' ELSE excluded.status END,
+              last_error_code = CASE WHEN src_source_attachment.status = 'ARCHIVED' OR excluded.status = 'ARCHIVED' THEN NULL ELSE excluded.last_error_code END`,
       params: [newId(), sourceItem.id, `${attachment.controlId}:${String(attachment.index)}`, attachment.remotePathHash,
         attachment.evidenceRevisionId ?? null, attachment.status, attachment.errorCode ?? null, timestamp],
+    });
+    const failureCode = item.failures.map((failure) => failure.code).join(",").slice(0, 500) || null;
+    statements.push({
+      sql: `UPDATE src_source_item SET
+              source_status = CASE WHEN EXISTS (
+                SELECT 1 FROM src_source_attachment WHERE source_item_id = ? AND status != 'ARCHIVED'
+              ) THEN 'PARTIAL' ELSE 'ARCHIVED' END,
+              form_evidence_revision_id = ?, archived_at = ?, revision = revision + 1, processed_config_revision = ?,
+              last_error_code = CASE WHEN EXISTS (
+                SELECT 1 FROM src_source_attachment WHERE source_item_id = ? AND status != 'ARCHIVED'
+              ) THEN ? ELSE NULL END
+            WHERE connector_id = ? AND external_id = ? AND remote_revision_hash = ?`,
+      params: [sourceItem.id, item.formEvidenceRevisionId, timestamp, item.configRevision, sourceItem.id, failureCode,
+        item.connectorId, item.instanceCode, item.remoteRevisionHash], expectChanges: 1,
     });
     await this.db.write(command(this.actor, "SOURCE_ITEM_ARCHIVED", "source_item", item.instanceCode, statements,
       { attachmentCount: item.attachmentEvidenceRevisionIds.length, failureCount: item.failures.length }));
@@ -205,11 +254,15 @@ export class OnlineAcquisitionSqlStore implements ConnectionConfigStore, SourceA
     return rows.map((row) => String(row.external_id) as InstanceCode);
   }
 
-  async advanceReconciliationCursor(connectorId: string, externalId: string): Promise<void> {
+  async advanceReconciliationCursor(connectorId: string, batchId: string, configRevision: number, externalId: string): Promise<void> {
     await this.db.write(command(this.actor, "SOURCE_RECONCILIATION_CURSOR_ADVANCED", "connector", connectorId, [{
-      sql: "UPDATE conn_feishu_config SET reconciliation_cursor_external_id = ? WHERE connector_id = ?",
-      params: [externalId, connectorId], expectChanges: 1,
-    }]));
+      sql: `UPDATE conn_feishu_config SET reconciliation_cursor_external_id = ?
+            WHERE connector_id = ? AND EXISTS (
+              SELECT 1 FROM conn_connector c JOIN src_sync_batch b ON b.connector_id = c.id
+              WHERE c.id = ? AND c.revision = ? AND c.status = 'ACTIVE' AND b.id = ? AND b.status = 'RUNNING'
+            )`,
+      params: [externalId, connectorId, connectorId, configRevision, batchId], expectChanges: 1,
+    }], { configRevision }));
   }
 
   async recordReconciliation(connectorId: string, result: ReconciliationResult): Promise<void> {

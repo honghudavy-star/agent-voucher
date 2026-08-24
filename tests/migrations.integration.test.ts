@@ -21,11 +21,18 @@ describe("module migration coordinator", () => {
       const client = new DbClient(paths.appDb); await client.start();
       const health = await client.health(); const migrations = health.moduleMigrations as Array<{ id: string; checksum: string }>;
       expect(migrations.map((item) => item.id)).toEqual(expect.arrayContaining([
-        "a01-foundation-v1", "a02-foundation-v1", "a02-job-runner-v2", "a03-online-acquisition-v1", "a04-evidence-v1", "a05-document-understanding-v1",
+        "a01-foundation-v1", "a01-legal-identity-v2", "a02-foundation-v1", "a02-job-runner-v2", "a03-online-acquisition-v1",
+        "a03-processed-config-revision-v5", "a04-evidence-v1", "a05-document-understanding-v1",
       ]));
       expect(migrations.every((item) => /^[a-f0-9]{64}$/.test(item.checksum))).toBe(true);
       const columns = await client.read<Array<{ name: string }>>({ sql: "PRAGMA table_info(job_task)", mode: "all" });
       expect(columns.map((item) => item.name)).toEqual(expect.arrayContaining(["lane", "requested_by_json", "last_heartbeat_at", "cancel_requested_at", "next_attempt_at"]));
+      const identityColumns = await client.read<Array<{ name: string }>>({ sql: "PRAGMA table_info(cfg_legal_identity)", mode: "all" });
+      expect(identityColumns.map((item) => item.name)).toEqual(expect.arrayContaining([
+        "legal_name", "taxpayer_id", "aliases_json", "revision", "created_at", "updated_at",
+      ]));
+      const sourceColumns = await client.read<Array<{ name: string }>>({ sql: "PRAGMA table_info(src_source_item)", mode: "all" });
+      expect(sourceColumns.map((item) => item.name)).toContain("processed_config_revision");
       await client.close();
       expect((await readdir(paths.dbDir)).some((name) => name.includes("pre-migrate"))).toBe(true);
     } finally { await rm(root, { recursive: true, force: true }); }

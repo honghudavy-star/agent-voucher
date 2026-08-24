@@ -6,7 +6,7 @@ import { Agent as HttpAgent, request as httpRequest } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AccessWorkspaceService } from "@agent-voucher/access-workspace";
 import { RuntimeAuditService } from "@agent-voucher/runtime-audit";
-import { InMemorySecretStore } from "@agent-voucher/online-acquisition";
+import { asConnectorId, InMemorySecretStore } from "@agent-voucher/online-acquisition";
 import { newId } from "@agent-voucher/shared-kernel";
 import { DbClient } from "../src/infrastructure/db/client.js";
 import { GraphClient } from "../src/infrastructure/graph/client.js";
@@ -162,6 +162,30 @@ describe("HTTP security boundary", () => {
     const download = await fetch(`${baseUrl}${location}/download`, { headers: { cookie } });
     expect(download.headers.get("content-disposition")).toContain("attachment"); expect(download.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await download.text()).toContain("2026-08-01");
+  });
+
+  it("rejects a stale Feishu configuration revision without changing the winning secret", async () => {
+    const { setCookies } = await login();
+    const sessionPair = cookiePair(setCookies.find((item) => item.startsWith("av_session=")) ?? "");
+    const csrfPair = cookiePair(setCookies.find((item) => item.startsWith("av_csrf=")) ?? "");
+    const csrf = csrfPair.slice(csrfPair.indexOf("=") + 1); const cookie = `${sessionPair}; ${csrfPair}`;
+    const connectorForm = (displayName: string, appSecret: string, expectedRevision?: number) => new URLSearchParams({
+      csrf_token: csrf, displayName, platform: "LARK", appId: "cli_test", appSecret,
+      approvalCodes: "APPROVAL_1", attachmentControlIds: "{}", initialLookbackFrom: "2026-08-01",
+      dailySyncTime: "02:00", timeZone: "Asia/Shanghai",
+      ...(expectedRevision === undefined ? {} : { expectedRevision: String(expectedRevision) }),
+    });
+    const post = (body: URLSearchParams) => fetch(`${baseUrl}/sources/feishu`, {
+      method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", cookie }, body,
+    });
+
+    expect((await post(connectorForm("初始连接", "secret-v1"))).status).toBe(302);
+    expect((await post(connectorForm("获胜更新", "secret-v2", 1))).status).toBe(302);
+    expect((await post(connectorForm("过期更新", "stale-secret", 1))).status).toBe(409);
+    const acquisition = phase2.acquisition({ userId: "test", username: "test", roles: ["ADMIN"] });
+    const stored = await acquisition.store.get(asConnectorId("feishu-default"));
+    expect(stored).toMatchObject({ displayName: "获胜更新", revision: 2 });
+    expect(await phase2.secretStore.read(stored!.secretReference)).toBe("secret-v2");
   });
 
   it("allows an authenticated operator to add an invoice field missing from the parser result", async () => {

@@ -2,7 +2,7 @@ import { appendFile, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AccessWorkspaceService, MasterDataSchema } from "@agent-voucher/access-workspace";
+import { AccessWorkspaceService, LegalEntityIdentitySchema, MasterDataSchema } from "@agent-voucher/access-workspace";
 import { JobRunner, RuntimeAuditService } from "@agent-voucher/runtime-audit";
 import type { ActorSnapshot, WriteCommand } from "@agent-voucher/shared-kernel";
 import { newId } from "@agent-voucher/shared-kernel";
@@ -56,6 +56,50 @@ describe("A01/A02 foundation", () => {
       .rejects.toMatchObject({ name: "ConflictError" });
     expect(await access.getWorkspace()).toMatchObject({ display_name: "新工作区", revision: 2 });
   }, 20_000);
+
+  it("stores one legal identity with admin-only revision CAS and normalized aliases", async () => {
+    expect(await access.getLegalIdentity()).toBeUndefined();
+    expect(() => LegalEntityIdentitySchema.parse({
+      legalName: "测试主体", taxpayerId: "invalid-id", aliases: [], revision: 0,
+    })).toThrow();
+
+    const operator: ActorSnapshot = { userId: "operator", username: "operator", roles: ["OPERATOR"] };
+    await expect(access.updateLegalIdentity(operator, {
+      legalName: "测试主体", taxpayerId: "91310000MA1K123456", aliases: [], revision: 0,
+    })).rejects.toMatchObject({ name: "AuthorizationError" });
+
+    await access.updateLegalIdentity(adminActor, {
+      legalName: " 测试主体 ", taxpayerId: "91310000ma1k123456",
+      aliases: ["旧名称", "旧名称", " 品牌名 "], revision: 0,
+    });
+    expect(await access.getLegalIdentity()).toEqual({
+      legalName: "测试主体", taxpayerId: "91310000MA1K123456",
+      aliases: ["旧名称", "品牌名"], revision: 1,
+    });
+
+    await access.updateLegalIdentity(adminActor, {
+      legalName: "测试主体（新）", taxpayerId: "91310000MA1K123456", aliases: ["测试主体"], revision: 1,
+    });
+    await expect(access.updateLegalIdentity(adminActor, {
+      legalName: "过期写入", taxpayerId: "91310000MA1K123456", aliases: [], revision: 1,
+    })).rejects.toMatchObject({ name: "ConflictError", message: "LEGAL_IDENTITY_REVISION_CONFLICT" });
+    expect(await access.getLegalIdentity()).toMatchObject({ legalName: "测试主体（新）", revision: 2 });
+
+    const concurrent = await Promise.allSettled([
+      access.updateLegalIdentity(adminActor, {
+        legalName: "并发主体甲", taxpayerId: "91310000MA1K123456", aliases: [], revision: 2,
+      }),
+      access.updateLegalIdentity(adminActor, {
+        legalName: "并发主体乙", taxpayerId: "91310000MA1K123456", aliases: [], revision: 2,
+      }),
+    ]);
+    expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(concurrent.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(await access.getLegalIdentity()).toMatchObject({ revision: 3 });
+
+    expect((await runtime.listAudit(100)).some((event) =>
+      event.action === "LEGAL_IDENTITY_UPDATED" && event.object_id === "default" && event.after_revision === 3)).toBe(true);
+  });
 
   it("locks existing accounts after five failures, recovers after expiry, and invalidates revoked or expired sessions", async () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {

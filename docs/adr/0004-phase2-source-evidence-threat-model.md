@@ -93,10 +93,12 @@ A03 仅在 A04 返回已经持久化的 Evidence Revision ID 后完成条目。�
 
 ### 5. 飞书与 Secret
 
-- App Secret 存 Windows Credential Manager，SQLite 仅保存 `secret_ref`；Tenant Token 只存在于必要的短生命周期内存；
+- App Secret 使用版本化引用存 Windows Credential Manager，SQLite 仅保存 `secret_ref`；新 Secret 先写、配置 CAS 成功后切换并清理旧引用，失败只清理本次引用；运行中同步拒绝配置更新；Tenant Token 只存在于必要的短生命周期内存；
 - 日志、审计、任务、Graph、错误响应和备份不得保存 Secret、Token、Page Token 或审批正文；
 - 发现只接收 `APPROVED`，但已追踪实例必须跨状态复核，以 Tombstone 表达 `CANCELED`、`REVERTED` 或删除；
-- 使用持久高水位加 48 小时重叠；Page Token 可用于单次恢复，高水位仅在整页终态后推进；
+- 实例查询按启动时间使用最长 29 天的分窗，从配置的首次回溯时间扫描至固定周期结束时间；Page Token 绑定当前分窗，分窗全部终态后才推进游标，完整周期结束后的下一轮重新扫描，以覆盖长时间待批实例；
+- 相同远端 Revision 只有在同一连接配置 Revision 已终态时才能跳过；附件映射变化必须重新归档，失败附件后续成功时以单调 UPSERT 收敛为 `ARCHIVED`；
+- 配置更新与同步批次启动通过连接 Revision 和 `RUNNING` 批次条件形成双向原子互斥；禁用连接与运行批次转 `CANCELED` 同事务提交，防止旧任务继续推进新配置的游标；
 - 401/403 转 `REAUTH_REQUIRED`，429 遵守 `Retry-After`，5xx 和超时有限重试；
 - 恢复数据库后重新解析 `secret_ref`，缺失时 fail closed 到 `REAUTH_REQUIRED`。
 
@@ -122,7 +124,7 @@ LAN HTTP 沿用 ADR-0003：默认 localhost，只有 `--lan` 显式开启；终�
 | 路径穿越、覆盖和符号链接逃逸 | 随机同卷暂存、真实路径校验、内容寻址、原子发布 | 有本机写权限的恶意进程仍超出应用边界 |
 | MIME 伪造、宏、脚本和解析器漏洞 | Magic/type 检测、隔离、受限子进程、资源上限、不内联执行 | Permission Model 不是完整沙箱 |
 | 重复提交或崩溃重放 | 外部 ID、远端 Revision、幂等键、Hash、独立 Occurrence | 业务意义上的重复交易仍需未来人工匹配 |
-| 飞书撤回遗漏 | 48 小时重叠、跨状态复核、Tombstone | Provider 行为或权限变化需真实环境验证 |
+| 飞书长审批或撤回遗漏 | 29 天启动时间分窗、周期回扫、跨状态复核、Tombstone | Provider 行为或权限变化需真实环境验证 |
 | Secret/Token 落盘 | Credential Manager、引用存储、脱敏规则和泄露扫描 | 运行中主机完全失陷不在应用可防范围 |
 | 备份成功但 Evidence 缺失 | 快照驱动对象清单、逐对象 Hash、Manifest 最后发布 | 介质本身仍未加密 |
 | 未授权查看或修订 | Session、CSRF、角色、Revision CAS、审计、安全下载 | LAN HTTP 可泄露会话和内容 |

@@ -3,6 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import packageJson from "../package.json" with { type: "json" };
 
 describe("CLI contract", () => {
   it("provides stable help and version output", () => {
@@ -12,7 +13,7 @@ describe("CLI contract", () => {
     expect(help.stdout).toContain("doctor [options]");
     expect(help.stdout).toContain("restore [options] <backup>");
     const version = spawnSync(process.execPath, ["dist/cli.js", "--version"], { encoding: "utf8" });
-    expect(version.stdout.trim()).toBe("0.1.0");
+    expect(version.stdout.trim()).toBe(packageJson.version);
   });
 
   it("emits non-interactive shell completions", () => {

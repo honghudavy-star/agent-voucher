@@ -28,6 +28,14 @@ export const UpdateWorkspaceSchema = z.object({
   revision: z.coerce.number().int().min(1),
 });
 
+export const LegalEntityIdentitySchema = z.object({
+  legalName: z.string().trim().min(1).max(200),
+  taxpayerId: z.string().trim().toUpperCase().regex(/^[0-9A-Z]{15,20}$/),
+  aliases: z.array(z.string().trim().min(1).max(200)).max(50)
+    .transform((values) => [...new Set(values)]),
+  revision: z.coerce.number().int().min(0),
+});
+
 export const PeriodSchema = z.object({
   period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   status: z.enum(["OPEN", "CLOSED"]),
@@ -57,6 +65,7 @@ export type BootstrapInput = z.infer<typeof BootstrapSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
 export type CreateUserInput = z.infer<typeof CreateUserSchema>;
 export type UpdateWorkspaceInput = z.infer<typeof UpdateWorkspaceSchema>;
+export type LegalEntityIdentity = z.infer<typeof LegalEntityIdentitySchema>;
 export type PeriodInput = z.infer<typeof PeriodSchema>;
 export type UpdatePeriodInput = z.infer<typeof UpdatePeriodSchema>;
 export type MasterDataInput = z.infer<typeof MasterDataSchema>;

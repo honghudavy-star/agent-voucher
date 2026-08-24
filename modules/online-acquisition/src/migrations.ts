@@ -111,6 +111,13 @@ export const onlineAcquisitionMigrations = [
     dependsOn: ["a03-page-checkpoint-v3"],
     upSql: "ALTER TABLE conn_feishu_config ADD COLUMN platform TEXT NOT NULL DEFAULT 'FEISHU' CHECK (platform IN ('FEISHU','LARK'));",
   },
+  {
+    module: "online-acquisition",
+    id: "a03-processed-config-revision-v5",
+    version: 5,
+    dependsOn: ["a03-feishu-platform-v4"],
+    upSql: "ALTER TABLE src_source_item ADD COLUMN processed_config_revision INTEGER NOT NULL DEFAULT 1 CHECK (processed_config_revision >= 1);",
+  },
 ] as const satisfies readonly ModuleMigration[];
 
 export const ONLINE_ACQUISITION_MIGRATION_V1 = Object.freeze({

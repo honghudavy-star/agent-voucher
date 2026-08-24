@@ -94,4 +94,20 @@ CREATE TABLE IF NOT EXISTS mst_expense_whitelist (
   created_at TEXT NOT NULL
 ) STRICT;`,
   },
+  {
+    module: "access-workspace",
+    id: "a01-legal-identity-v2",
+    version: 2,
+    dependsOn: ["a01-foundation-v1"],
+    upSql: `
+CREATE TABLE IF NOT EXISTS cfg_legal_identity (
+  id TEXT PRIMARY KEY CHECK (id = 'default'),
+  legal_name TEXT NOT NULL CHECK (length(legal_name) BETWEEN 1 AND 200),
+  taxpayer_id TEXT NOT NULL CHECK (length(taxpayer_id) BETWEEN 15 AND 20),
+  aliases_json TEXT NOT NULL CHECK (json_valid(aliases_json)),
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;`,
+  },
 ] as const satisfies readonly ModuleMigration[];

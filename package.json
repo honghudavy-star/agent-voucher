@@ -1,6 +1,6 @@
 {
   "name": "agent-voucher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local-first accounting workspace foundation",
   "type": "module",
   "license": "Apache-2.0",
@@ -14,6 +14,7 @@
     "vendor/",
     "scripts/check-node-version.mjs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "workspaces": [

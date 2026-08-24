@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appLayout, loginPage, masterDataPage, periodsPage, setupPage, usersPage, workspacePage } from "../src/web/views.js";
+import { appLayout, feishuConnectionsPage, loginPage, masterDataPage, periodsPage, setupPage, usersPage, workspacePage } from "../src/web/views.js";
 
 describe("server-rendered UI", () => {
   it("escapes untrusted workspace and audit values", () => {
@@ -36,6 +36,14 @@ describe("server-rendered UI", () => {
     const master = masterDataPage([], "csrf");
     expect(master).toContain('for="master-data-type"');
     expect(master).toContain('id="master-data-type"');
+  });
+
+  it("carries the current Feishu revision in the admin update form", () => {
+    const html = feishuConnectionsPage([{
+      id: "feishu-default", display_name: "Lark", platform: "LARK", app_id: "cli_test", status: "ACTIVE",
+      approval_codes_json: "[]", daily_sync_time: "02:00", revision: 3,
+    }], "csrf", "可用", { canAdmin: true, canSync: true });
+    expect(html).toContain('name="expectedRevision" value="3"');
   });
 
   it("renders LAN warnings on public pages and confirmation contracts on disable forms", () => {

@@ -71,7 +71,7 @@ describe("A04 evidence vault", () => {
     if (remote.status === "QUARANTINED") throw new Error("unexpected quarantine");
     const attachment = await vault.ingest({
       kind: "CONTRACT_FILE", sourceKind: "FEISHU", originalName: "contract.pdf", declaredMediaType: "application/pdf",
-      sourceRef: "instance-1:contract:0", sourceRevision: "r1", idempotencyKey: "feishu-attachment-r1", actor,
+      sourceRef: "instance-1:contract:0", sourceRevision: "r1", idempotencyKey: "feishu-attachment-r1", actor, // gitleaks:allow -- deterministic test key
       chunks: chunks("%PDF-1.4\n%%EOF\n"),
     });
     if (attachment.status === "QUARANTINED") throw new Error("unexpected quarantine");

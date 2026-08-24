@@ -452,11 +452,13 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
     const session = await authenticated(request, reply); if (!session) return; requireRole(session, "ADMIN"); requireCsrf(request, session, options.access); const data = form(request);
     const approvalCodes = field(data, "approvalCodes").split(",").map((value) => value.trim()).filter(Boolean);
     const initialDate = field(data, "initialLookbackFrom");
+    const expectedRevision = field(data, "expectedRevision");
     await options.phase2.acquisition(session.actor).service.configureFeishu({
       connectorId: "feishu-default", displayName: field(data, "displayName"), platform: z.enum(["FEISHU", "LARK"]).parse(field(data, "platform")),
       appId: field(data, "appId"), appSecret: field(data, "appSecret"),
       approvalCodes, attachmentControlIds: z.record(z.string(), z.array(z.string())).parse(JSON.parse(field(data, "attachmentControlIds")) as unknown),
       initialLookbackFrom: `${initialDate}T00:00:00.000+08:00`, dailySyncTime: field(data, "dailySyncTime"), timeZone: field(data, "timeZone"), overlapHours: 48,
+      ...(expectedRevision ? { expectedRevision: z.coerce.number().int().positive().parse(expectedRevision) } : {}),
     });
     return reply.redirect("/sources/feishu");
   });
