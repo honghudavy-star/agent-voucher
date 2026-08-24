@@ -53,7 +53,6 @@ dataDirOption(program.command("start").description("以前台模式启动Web工�
     console.error(`Agent Voucher ${packageJson.version} 已启动`);
     console.error(`本机地址: ${started.url}`);
     console.error(`数据目录: ${dataDir}`);
-    if (started.setupUrl) console.error(`初始化链接（15分钟有效）: ${started.setupUrl}`);
     if (options.lan) {
       console.error("警告: 局域网模式使用未加密HTTP，只能用于受信、隔离的私有网络；禁止公网暴露。");
       for (const url of runtime.lanUrls(port)) console.error(`局域网地址: ${url}`);

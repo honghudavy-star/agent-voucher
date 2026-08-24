@@ -35,7 +35,6 @@ interface ServerOptions {
   port: number;
   lanMode: boolean;
   dataDir: string;
-  setupTokenValid(token: string): boolean;
   access: AccessWorkspaceService;
   runtime: RuntimeAuditService;
   phase2: Phase2Runtime;
@@ -48,6 +47,7 @@ type FormData = Record<string, string | string[] | undefined>;
 const SESSION_COOKIE = "av_session";
 const CSRF_COOKIE = "av_csrf";
 const LOGIN_NONCE_COOKIE = "av_login_nonce";
+const isLoopbackAddress = (address: string): boolean => address === "::1" || address.startsWith("127.") || address.startsWith("::ffff:127.");
 
 const form = (request: FastifyRequest): FormData => (request.body ?? {}) as FormData;
 const field = (data: FormData, key: string): string => Array.isArray(data[key]) ? String(data[key]?.[0] ?? "") : String(data[key] ?? "");
@@ -183,16 +183,20 @@ export async function createServer(options: ServerOptions): Promise<FastifyInsta
 
   app.get("/", async (_request, reply) => reply.redirect(await options.access.isSetup() ? "/workspace" : "/setup"));
 
-  app.get("/setup", async (_request, reply) => {
+  app.get("/setup", async (request, reply) => {
     if (await options.access.isSetup()) return reply.redirect("/auth/login");
+    if (!isLoopbackAddress(request.ip)) {
+      return reply.code(403).type("text/html; charset=utf-8").send(setupPage("首次初始化请在安装电脑上完成", options.lanMode, false));
+    }
     return reply.type("text/html; charset=utf-8").send(setupPage(undefined, options.lanMode));
   });
   app.post("/setup", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
-    const parsed = BootstrapSchema.parse(form(request));
-    if (!options.setupTokenValid(parsed.token)) {
+    if (await options.access.isSetup()) return reply.redirect("/auth/login");
+    if (!isLoopbackAddress(request.ip)) {
       await options.runtime.recordRejected({ userId: "SYSTEM", username: "setup", roles: ["ADMIN"], ipAddress: request.ip }, "SETUP_REJECTED", "workspace", "default");
-      return reply.code(403).type("text/html").send(setupPage("初始化链接无效或已过期", options.lanMode));
+      return reply.code(403).type("text/html; charset=utf-8").send(setupPage("首次初始化请在安装电脑上完成", options.lanMode, false));
     }
+    const parsed = BootstrapSchema.parse(form(request));
     await options.access.bootstrap(parsed);
     return reply.redirect("/auth/login");
   });

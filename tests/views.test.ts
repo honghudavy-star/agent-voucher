@@ -47,7 +47,11 @@ describe("server-rendered UI", () => {
   });
 
   it("renders LAN warnings on public pages and confirmation contracts on disable forms", () => {
-    expect(setupPage(undefined, true)).toContain('role="alert"');
+    const setup = setupPage(undefined, true);
+    expect(setup).toContain('role="alert"');
+    expect(setup).not.toContain('name="token"');
+    expect(setup).not.toContain("15分钟");
+    expect(setupPage("首次初始化请在安装电脑上完成", true, false)).not.toContain("<form");
     expect(loginPage("nonce", undefined, true)).toContain("不安全局域网模式");
     const users = usersPage([{ id: "1", username: "u", display_name: "U", roles: "OPERATOR", status: "ACTIVE", revision: 1 }], "csrf");
     expect(users).toContain("data-confirm=");
